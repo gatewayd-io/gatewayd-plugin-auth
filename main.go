@@ -4,12 +4,12 @@ import (
 	"flag"
 	"os"
 
+	"github.com/gatewayd-io/gatewayd-plugin-auth/plugin"
 	sdkConfig "github.com/gatewayd-io/gatewayd-plugin-sdk/config"
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/logging"
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/metrics"
 	p "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin"
 	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
-	"github.com/gatewayd-io/plugin-template-go/plugin"
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
 )
