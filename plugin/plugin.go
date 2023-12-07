@@ -2,10 +2,15 @@ package plugin
 
 import (
 	"context"
+	"encoding/base64"
 
+	"github.com/gatewayd-io/gatewayd-plugin-sdk/databases/postgres"
+	sdkPlugin "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin"
 	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
+	"github.com/jackc/pgx/v5/pgproto3"
+	"github.com/spf13/cast"
 	"google.golang.org/grpc"
 )
 
@@ -54,24 +59,84 @@ func (p *Plugin) GetPluginConfig(
 // or a response.
 func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.Struct, error) {
 	OnTrafficFromClient.Inc()
-	// Example req:
-	// {
-	//     "client": {
-	//         "local": "0.0.0.0:15432",
-	//         "remote": "127.0.0.1:45612"
-	//     },
-	//     "error": "",
-	//     "query": "eyJUeXBlIjoiUXVlcnkiLCJTdHJpbmciOiJzZWxlY3QgMTsifQ==",
-	//     "request": "UQAAAA5zZWxlY3QgMTsA",
-	//     "server": {
-	//         "local": "127.0.0.1:60386",
-	//         "remote": "127.0.0.1:5432"
-	//     }
-	// }
-	p.Logger.Debug("OnTrafficFromClient", "req", req)
+	req, err := postgres.HandleClientMessage(req, p.Logger)
+	if err != nil {
+		p.Logger.Info("Failed to handle client message", "error", err)
+	}
 
-	request := req.Fields["request"].GetBytesValue()
-	p.Logger.Debug("OnTrafficFromClient", "request", string(request))
+	if val := req.Fields["startupMessage"]; val != nil {
+		startupMessageEncoded := cast.ToString(sdkPlugin.GetAttr(req, "startupMessage", ""))
+		if startupMessageEncoded != "" {
+			startupMessageDecoded, err := base64.StdEncoding.DecodeString(startupMessageEncoded)
+			if err != nil {
+				p.Logger.Info("Failed to decode startup message", "error", err)
+				return nil, err
+			}
+
+			startupMessage := cast.ToStringMapString(string(startupMessageDecoded))
+			p.Logger.Info("OnTrafficFromClient", "startupMessage", startupMessage)
+
+			if startupMessage["Type"] == "StartupMessage" {
+				p.Logger.Info("OnTrafficFromClient", "User is correct")
+
+				response := pgproto3.AuthenticationCleartextPassword{}
+				req.Fields["response"] = v1.NewBytesValue(response.Encode(nil))
+				req.Fields["terminate"] = v1.NewBoolValue(true)
+			} else {
+				p.Logger.Info("OnTrafficFromClient", "User is incorrect")
+
+				response := pgproto3.ErrorResponse{
+					Message: "User is incorrect",
+				}
+				req.Fields["response"] = v1.NewBytesValue(response.Encode(nil))
+				req.Fields["terminate"] = v1.NewBoolValue(true)
+			}
+		}
+	} else if val := req.Fields["passwordMessage"]; val != nil {
+		passwordMessageEncoded := cast.ToString(sdkPlugin.GetAttr(req, "passwordMessage", ""))
+		if passwordMessageEncoded != "" {
+			passwordMessageDecoded, err := base64.StdEncoding.DecodeString(passwordMessageEncoded)
+			if err != nil {
+				p.Logger.Info("Failed to decode password message", "error", err)
+				return nil, err
+			}
+
+			passwordMessage := cast.ToStringMapString(string(passwordMessageDecoded))
+			p.Logger.Info("OnTrafficFromClient", "passwordMessage", passwordMessage)
+
+			if passwordMessage["Password"] == "postgres" {
+				p.Logger.Info("OnTrafficFromClient", "Password is correct")
+
+				authOK := pgproto3.AuthenticationOk{}
+				readyForQuery := pgproto3.ReadyForQuery{TxStatus: 'I'}
+				response := readyForQuery.Encode(authOK.Encode(nil))
+				req.Fields["response"] = v1.NewBytesValue(response)
+				req.Fields["terminate"] = v1.NewBoolValue(true)
+			} else {
+				p.Logger.Info("OnTrafficFromClient", "Password is incorrect")
+
+				response := pgproto3.ErrorResponse{
+					Message: "Password is incorrect",
+				}
+				req.Fields["response"] = v1.NewBytesValue(response.Encode(nil))
+				req.Fields["terminate"] = v1.NewBoolValue(true)
+			}
+		}
+	} else {
+		p.Logger.Info("OnTrafficFromClient", "Regular message")
+	}
+
+	return req, nil
+}
+
+func (p *Plugin) OnTrafficFromServer(ctx context.Context, req *v1.Struct) (*v1.Struct, error) {
+	OnTrafficFromServer.Inc()
+	req, err := postgres.HandleServerMessage(req, p.Logger)
+	if err != nil {
+		p.Logger.Info("Failed to handle server message", "error", err)
+	}
+
+	p.Logger.Debug("OnTrafficFromServer", "req", req)
 
 	return req, nil
 }

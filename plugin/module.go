@@ -36,6 +36,7 @@ var (
 		},
 		"hooks": []interface{}{
 			int32(v1.HookName_HOOK_NAME_ON_TRAFFIC_FROM_CLIENT),
+			int32(v1.HookName_HOOK_NAME_ON_TRAFFIC_FROM_SERVER),
 		},
 		"tags":       []interface{}{"plugin", "auth"},
 		"categories": []interface{}{"auth"},
