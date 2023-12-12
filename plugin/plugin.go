@@ -81,13 +81,13 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		p.Logger.Info("OnTrafficFromClient", "startupMessage", parameters)
 
 		if parameters["user"] == "postgres" {
-			p.Logger.Info("OnTrafficFromClient", "message", "User is correct")
+			p.Logger.Info("OnTrafficFromClient", "msg", "User is correct")
 
 			response := pgproto3.AuthenticationCleartextPassword{}
 			req.Fields["response"] = v1.NewBytesValue(response.Encode(nil))
 			req.Fields["terminate"] = v1.NewBoolValue(true)
 		} else {
-			p.Logger.Info("OnTrafficFromClient", "message", "User is incorrect")
+			p.Logger.Info("OnTrafficFromClient", "msg", "User is incorrect")
 
 			req.Fields["response"] = v1.NewBytesValue(errorResponse.Encode(nil))
 			req.Fields["terminate"] = v1.NewBoolValue(true)
@@ -103,7 +103,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		p.Logger.Info("OnTrafficFromClient", "passwordMessage", passwordMessage)
 
 		if passwordMessage["Password"] == "postgres" {
-			p.Logger.Info("OnTrafficFromClient", "message", "Password is correct")
+			p.Logger.Info("OnTrafficFromClient", "msg", "Password is correct")
 
 			authOK := pgproto3.AuthenticationOk{}
 			pStat1 := pgproto3.ParameterStatus{
@@ -131,13 +131,13 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			req.Fields["response"] = v1.NewBytesValue(response)
 			req.Fields["terminate"] = v1.NewBoolValue(true)
 		} else {
-			p.Logger.Info("OnTrafficFromClient", "message", "Password is incorrect")
+			p.Logger.Info("OnTrafficFromClient", "msg", "Password is incorrect")
 
 			req.Fields["response"] = v1.NewBytesValue(errorResponse.Encode(nil))
 			req.Fields["terminate"] = v1.NewBoolValue(true)
 		}
 	} else {
-		p.Logger.Info("OnTrafficFromClient", "message", "Regular message", "req", req)
+		p.Logger.Info("OnTrafficFromClient", "msg", "Regular message", "req", req)
 	}
 
 	return req, nil
