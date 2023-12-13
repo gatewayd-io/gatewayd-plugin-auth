@@ -114,7 +114,9 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		} else {
 			p.Logger.Info("OnTrafficFromClient", "msg", "User is incorrect")
 
-			req.Fields["response"] = v1.NewBytesValue(errorResponse.Encode(nil))
+			terminate := pgproto3.Terminate{}
+			response := terminate.Encode(errorResponse.Encode(nil))
+			req.Fields["response"] = v1.NewBytesValue(response)
 			req.Fields["terminate"] = v1.NewBoolValue(true)
 		}
 	} else if val, exists := req.Fields["passwordMessage"]; exists {
@@ -164,7 +166,9 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			p.Logger.Info("OnTrafficFromClient", "msg", "Username/Password is incorrect")
 			p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
 
-			req.Fields["response"] = v1.NewBytesValue(errorResponse.Encode(nil))
+			terminate := pgproto3.Terminate{}
+			response := terminate.Encode(errorResponse.Encode(nil))
+			req.Fields["response"] = v1.NewBytesValue(response)
 			req.Fields["terminate"] = v1.NewBoolValue(true)
 		}
 	} else {
