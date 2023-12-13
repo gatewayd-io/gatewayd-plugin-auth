@@ -27,7 +27,8 @@ func main() {
 	})
 
 	pluginInstance := plugin.NewTemplatePlugin(plugin.Plugin{
-		Logger: logger,
+		Logger:     logger,
+		ClientInfo: make(map[plugin.ConnPair]plugin.AuthInfo),
 	})
 
 	var config *metrics.MetricsConfig

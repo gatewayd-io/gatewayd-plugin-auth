@@ -19,10 +19,26 @@ var errorResponse = pgproto3.ErrorResponse{
 	Message:  "password authentication failed",
 }
 
+type AuthInfo struct {
+	Username string
+	Password string
+}
+
+type ConnPair struct {
+	Client struct {
+		Local  string
+		Remote string
+	}
+	Server struct {
+		Local  string
+		Remote string
+	}
+}
 type Plugin struct {
 	goplugin.GRPCPlugin
 	v1.GatewayDPluginServiceServer
-	Logger hclog.Logger
+	ClientInfo map[ConnPair]AuthInfo
+	Logger     hclog.Logger
 }
 
 type AuthPlugin struct {
@@ -69,6 +85,11 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		p.Logger.Info("Failed to handle client message", "error", err)
 	}
 
+	connPair := GetConnPair(req)
+	if _, exists := p.ClientInfo[connPair]; !exists {
+		p.ClientInfo[connPair] = AuthInfo{}
+	}
+
 	if val, exists := req.Fields["startupMessage"]; exists {
 		startupMessageDecoded, err := base64.StdEncoding.DecodeString(val.GetStringValue())
 		if err != nil {
@@ -80,7 +101,11 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		parameters := cast.ToStringMapString(startupMessage["Parameters"])
 		p.Logger.Info("OnTrafficFromClient", "startupMessage", parameters)
 
-		if parameters["user"] == "postgres" {
+		authInfo := p.ClientInfo[connPair]
+		authInfo.Username = parameters["user"]
+		p.ClientInfo[connPair] = authInfo
+
+		if p.ClientInfo[connPair].Username == "postgres" {
 			p.Logger.Info("OnTrafficFromClient", "msg", "User is correct")
 
 			response := pgproto3.AuthenticationCleartextPassword{}
@@ -102,8 +127,13 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		passwordMessage := cast.ToStringMapString(string(passwordMessageDecoded))
 		p.Logger.Info("OnTrafficFromClient", "passwordMessage", passwordMessage)
 
-		if passwordMessage["Password"] == "postgres" {
-			p.Logger.Info("OnTrafficFromClient", "msg", "Password is correct")
+		authInfo := p.ClientInfo[connPair]
+		authInfo.Password = passwordMessage["Password"]
+		p.ClientInfo[connPair] = authInfo
+
+		if p.ClientInfo[connPair].Username == "postgres" && p.ClientInfo[connPair].Password == "postgres" {
+			p.Logger.Info("OnTrafficFromClient", "msg", "Username/Password is correct")
+			p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
 
 			authOK := pgproto3.AuthenticationOk{}
 			pStat1 := pgproto3.ParameterStatus{
@@ -131,7 +161,8 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			req.Fields["response"] = v1.NewBytesValue(response)
 			req.Fields["terminate"] = v1.NewBoolValue(true)
 		} else {
-			p.Logger.Info("OnTrafficFromClient", "msg", "Password is incorrect")
+			p.Logger.Info("OnTrafficFromClient", "msg", "Username/Password is incorrect")
+			p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
 
 			req.Fields["response"] = v1.NewBytesValue(errorResponse.Encode(nil))
 			req.Fields["terminate"] = v1.NewBoolValue(true)
@@ -153,4 +184,22 @@ func (p *Plugin) OnTrafficFromServer(ctx context.Context, req *v1.Struct) (*v1.S
 	p.Logger.Debug("OnTrafficFromServer", "req", req)
 
 	return req, nil
+}
+
+func GetConnPair(req *v1.Struct) ConnPair {
+	var connPair ConnPair
+
+	if val, exists := req.Fields["client"]; exists {
+		client := cast.ToStringMap(val.GetStringValue())
+		connPair.Client.Local = cast.ToString(client["local"])
+		connPair.Client.Remote = cast.ToString(client["remote"])
+	}
+
+	if val, exists := req.Fields["server"]; exists {
+		server := cast.ToStringMap(val.GetStringValue())
+		connPair.Server.Local = cast.ToString(server["local"])
+		connPair.Server.Remote = cast.ToString(server["local"])
+	}
+
+	return connPair
 }
