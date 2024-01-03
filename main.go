@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"flag"
 	"os"
 
@@ -12,6 +13,7 @@ import (
 	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
+	"github.com/spf13/cast"
 )
 
 func main() {
@@ -26,17 +28,32 @@ func main() {
 		Color:      hclog.ColorOff,
 	})
 
+	// Generate a random 4 bytes salt
+	// TODO: Make this dynamically rotatable or generate a new one per client connection
+	var salt [plugin.SALT_SIZE]byte
+	if _, err := rand.Read(salt[:]); err != nil {
+		// If we can't generate a salt, we can't authenticate
+		// If you reach this point, you should probably start
+		// looking for a new job! Farming is a good option.
+		logger.Error("Failed to generate salt", "error", err)
+		os.Exit(1)
+	}
+
 	pluginInstance := plugin.NewTemplatePlugin(plugin.Plugin{
 		Logger:     logger,
 		ClientInfo: make(map[plugin.ConnPair]plugin.AuthInfo),
+		AuthType:   plugin.MD5,
+		Salt:       salt,
 	})
 
-	var config *metrics.MetricsConfig
-	if cfg, ok := plugin.PluginConfig["config"].(map[string]interface{}); ok {
-		config = metrics.NewMetricsConfig(cfg)
-	}
-	if config != nil && config.Enabled {
-		go metrics.ExposeMetrics(config, logger)
+	var metricsConfig *metrics.MetricsConfig
+	if cfg := cast.ToStringMap(plugin.PluginConfig["config"]); cfg != nil {
+		metricsConfig = metrics.NewMetricsConfig(cfg)
+		if metricsConfig != nil && metricsConfig.Enabled {
+			go metrics.ExposeMetrics(metricsConfig, logger)
+		}
+
+		pluginInstance.Impl.AuthType = plugin.AuthType(cast.ToString(cfg["authType"]))
 	}
 
 	goplugin.Serve(&goplugin.ServeConfig{

@@ -2,7 +2,9 @@ package plugin
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/base64"
+	"encoding/hex"
 
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/databases/postgres"
 	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
@@ -37,8 +39,11 @@ type ConnPair struct {
 type Plugin struct {
 	goplugin.GRPCPlugin
 	v1.GatewayDPluginServiceServer
+
+	AuthType   AuthType
 	ClientInfo map[ConnPair]AuthInfo
 	Logger     hclog.Logger
+	Salt       [4]byte
 }
 
 type AuthPlugin struct {
@@ -108,8 +113,25 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		if p.ClientInfo[connPair].Username == "postgres" {
 			p.Logger.Info("OnTrafficFromClient", "msg", "User is correct")
 
-			response := pgproto3.AuthenticationCleartextPassword{}
-			req.Fields["response"] = v1.NewBytesValue(response.Encode(nil))
+			var response []byte
+			switch p.AuthType {
+			case CLEARTEXTPASSWORD:
+				p.Logger.Info("OnTrafficFromClient", "msg", "CleartextPassword")
+				authResponse := pgproto3.AuthenticationCleartextPassword{}
+				response = authResponse.Encode(nil)
+			case MD5:
+				p.Logger.Info("OnTrafficFromClient", "msg", "MD5")
+				authResponse := pgproto3.AuthenticationMD5Password{
+					Salt: p.Salt,
+				}
+				response = authResponse.Encode(nil)
+			case SCRAMSHA256:
+				p.Logger.Info("OnTrafficFromClient", "msg", "ScramSHA256")
+				authResponse := pgproto3.AuthenticationSASL{}
+				response = authResponse.Encode(nil)
+			}
+
+			req.Fields["response"] = v1.NewBytesValue(response)
 			req.Fields["terminate"] = v1.NewBoolValue(true)
 		} else {
 			p.Logger.Info("OnTrafficFromClient", "msg", "User is incorrect")
@@ -130,7 +152,24 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		p.Logger.Info("OnTrafficFromClient", "passwordMessage", passwordMessage)
 
 		authInfo := p.ClientInfo[connPair]
-		authInfo.Password = passwordMessage["Password"]
+		switch p.AuthType {
+		case CLEARTEXTPASSWORD:
+			authInfo.Password = passwordMessage["Password"]
+		case MD5:
+			password := "postgres"
+			if len(passwordMessage["Password"]) != MD5_PASSWORD_LENGTH {
+				p.Logger.Info("OnTrafficFromClient", "msg", "Password is incorrect")
+				p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
+				break
+			}
+
+			hashedPassword := pgMD5Encrypt(password, authInfo.Username, string(p.Salt[:]))
+			p.Logger.Info("OnTrafficFromClient", "hashedPassword", hashedPassword)
+
+			if hashedPassword == passwordMessage["Password"] {
+				authInfo.Password = password
+			}
+		}
 		p.ClientInfo[connPair] = authInfo
 
 		if p.ClientInfo[connPair].Username == "postgres" && p.ClientInfo[connPair].Password == "postgres" {
@@ -206,4 +245,16 @@ func GetConnPair(req *v1.Struct) ConnPair {
 	}
 
 	return connPair
+}
+
+// pgMD5Encrypt computes the MD5 checksum of "passwd" followed by "salt".
+// concat('md5', md5(concat(md5(concat(password, username)), random-salt)))
+// https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-START-UP
+func pgMD5Encrypt(username, passwd, salt string) string {
+	hash := md5.Sum([]byte(passwd + username))
+	data := hex.EncodeToString(hash[:]) + salt
+	hash = md5.Sum([]byte(data))
+
+	// Convert the hash to a hex string
+	return "md5" + hex.EncodeToString(hash[:])
 }

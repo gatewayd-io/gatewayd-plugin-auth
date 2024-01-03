@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	sdkConfig "github.com/gatewayd-io/gatewayd-plugin-sdk/config"
 	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
 	goplugin "github.com/hashicorp/go-plugin"
 )
@@ -33,6 +34,7 @@ var (
 			"metricsEnabled":          "true",
 			"metricsUnixDomainSocket": "/tmp/gatewayd-plugin-auth.sock",
 			"metricsEndpoint":         "/metrics",
+			"authType":                sdkConfig.GetEnv("AUTH_TYPE", "scram-sha-256"),
 		},
 		"hooks": []interface{}{
 			int32(v1.HookName_HOOK_NAME_ON_TRAFFIC_FROM_CLIENT),
