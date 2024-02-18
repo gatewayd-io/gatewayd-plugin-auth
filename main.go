@@ -46,13 +46,13 @@ func main() {
 		Salt:       salt,
 	})
 
-	var metricsConfig *metrics.MetricsConfig
 	if cfg := cast.ToStringMap(plugin.PluginConfig["config"]); cfg != nil {
-		metricsConfig = metrics.NewMetricsConfig(cfg)
+		metricsConfig := metrics.NewMetricsConfig(cfg)
 		if metricsConfig != nil && metricsConfig.Enabled {
 			go metrics.ExposeMetrics(metricsConfig, logger)
 		}
 
+		pluginInstance.Impl.APIAddress = cast.ToString(cfg["apiAddress"])
 		pluginInstance.Impl.AuthType = plugin.AuthType(cast.ToString(cfg["authType"]))
 	}
 

@@ -7,11 +7,13 @@ import (
 	"encoding/hex"
 
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/databases/postgres"
+	sdkPlugin "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin"
 	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/spf13/cast"
+	"golang.org/x/exp/maps"
 	"google.golang.org/grpc"
 )
 
@@ -40,6 +42,7 @@ type Plugin struct {
 	goplugin.GRPCPlugin
 	v1.GatewayDPluginServiceServer
 
+	APIAddress string
 	AuthType   AuthType
 	ClientInfo map[ConnPair]AuthInfo
 	Logger     hclog.Logger
@@ -127,7 +130,9 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 				response = authResponse.Encode(nil)
 			case SCRAMSHA256:
 				p.Logger.Info("OnTrafficFromClient", "msg", "ScramSHA256")
-				authResponse := pgproto3.AuthenticationSASL{}
+				authResponse := pgproto3.AuthenticationSASL{
+					AuthMechanisms: []string{"SCRAM-SHA-256"},
+				}
 				response = authResponse.Encode(nil)
 			}
 
@@ -169,10 +174,30 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			if hashedPassword == passwordMessage["Password"] {
 				authInfo.Password = password
 			}
+		case SCRAMSHA256:
+			server := cast.ToStringMapString(sdkPlugin.GetAttr(req, "server", ""))
+			serverConfig := p.getServers(server["network"], server["address"])
+			if len(serverConfig) == 0 {
+				p.Logger.Info("OnTrafficFromClient", "msg", "Failed to get server config")
+				p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
+				break
+			}
+			if !serverConfig[maps.Keys(serverConfig)[0]].TLSEnabled {
+				p.Logger.Info("OnTrafficFromClient", "msg", "TLS is not enabled, cannot use SCRAM-SHA-256")
+				p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
+				break
+			}
+			if passwordMessage["Password"] == "SCRAM-SHA-256" {
+				p.Logger.Info("OnTrafficFromClient", "msg", "SCRAM-SHA-256 is not implemented yet")
+				authInfo.Password = passwordMessage["Password"]
+				break
+			}
+			// TODO: Implement SCRAM-SHA-256
+			p.Logger.Info("OnTrafficFromClient", "msg", "SCRAM-SHA-256 is not implemented yet")
 		}
 		p.ClientInfo[connPair] = authInfo
 
-		if p.ClientInfo[connPair].Username == "postgres" && p.ClientInfo[connPair].Password == "postgres" {
+		if p.ClientInfo[connPair].Username == "postgres" && (p.ClientInfo[connPair].Password == "postgres" || p.ClientInfo[connPair].Password == "SCRAM-SHA-256") {
 			p.Logger.Info("OnTrafficFromClient", "msg", "Username/Password is correct")
 			p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
 
