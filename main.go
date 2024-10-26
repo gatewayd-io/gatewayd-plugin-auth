@@ -14,6 +14,8 @@ import (
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/spf13/cast"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -52,7 +54,18 @@ func main() {
 			go metrics.ExposeMetrics(metricsConfig, logger)
 		}
 
-		pluginInstance.Impl.APIAddress = cast.ToString(cfg["apiAddress"])
+		pluginInstance.Impl.APIAddress = cast.ToString(cfg["apiGRPCAddress"])
+		apiClient, err := grpc.NewClient(
+			pluginInstance.Impl.APIAddress,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil || apiClient == nil {
+			logger.Error("Failed to initialize API client", "error", err)
+			os.Exit(1)
+		}
+		pluginInstance.Impl.APIClient = apiClient
+		defer apiClient.Close()
+
 		pluginInstance.Impl.AuthType = plugin.AuthType(cast.ToString(cfg["authType"]))
 	}
 

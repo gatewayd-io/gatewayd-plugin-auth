@@ -35,7 +35,7 @@ var (
 			"metricsUnixDomainSocket": "/tmp/gatewayd-plugin-auth.sock",
 			"metricsEndpoint":         "/metrics",
 			"authType":                sdkConfig.GetEnv("AUTH_TYPE", "scram-sha-256"),
-			"apiAddress":              sdkConfig.GetEnv("API_ADDRESS", "localhost:18080"),
+			"apiGRPCAddress":          sdkConfig.GetEnv("API_GRPC_ADDRESS", "localhost:19090"),
 		},
 		"hooks": []interface{}{
 			int32(v1.HookName_HOOK_NAME_ON_TRAFFIC_FROM_CLIENT),

@@ -9,6 +9,7 @@ import (
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/databases/postgres"
 	sdkPlugin "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin"
 	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
+	apiV1 "github.com/gatewayd-io/gatewayd/api/v1"
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/jackc/pgx/v5/pgproto3"
@@ -42,6 +43,7 @@ type Plugin struct {
 	goplugin.GRPCPlugin
 	v1.GatewayDPluginServiceServer
 
+	APIClient  apiV1.GatewayDAdminAPIServiceClient
 	APIAddress string
 	AuthType   AuthType
 	ClientInfo map[ConnPair]AuthInfo
@@ -121,19 +123,31 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			case CLEARTEXTPASSWORD:
 				p.Logger.Info("OnTrafficFromClient", "msg", "CleartextPassword")
 				authResponse := pgproto3.AuthenticationCleartextPassword{}
-				response = authResponse.Encode(nil)
+				response, err = authResponse.Encode(nil)
+				if err != nil {
+					p.Logger.Info("Failed to encode cleartext password", "error", err)
+					return nil, err
+				}
 			case MD5:
 				p.Logger.Info("OnTrafficFromClient", "msg", "MD5")
 				authResponse := pgproto3.AuthenticationMD5Password{
 					Salt: p.Salt,
 				}
-				response = authResponse.Encode(nil)
+				response, err = authResponse.Encode(nil)
+				if err != nil {
+					p.Logger.Info("Failed to encode MD5 password", "error", err)
+					return nil, err
+				}
 			case SCRAMSHA256:
 				p.Logger.Info("OnTrafficFromClient", "msg", "ScramSHA256")
 				authResponse := pgproto3.AuthenticationSASL{
 					AuthMechanisms: []string{"SCRAM-SHA-256"},
 				}
-				response = authResponse.Encode(nil)
+				response, err = authResponse.Encode(nil)
+				if err != nil {
+					p.Logger.Info("Failed to encode SCRAM-SHA-256 password", "error", err)
+					return nil, err
+				}
 			}
 
 			req.Fields["response"] = v1.NewBytesValue(response)
@@ -142,7 +156,16 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			p.Logger.Info("OnTrafficFromClient", "msg", "User is incorrect")
 
 			terminate := pgproto3.Terminate{}
-			response := terminate.Encode(errorResponse.Encode(nil))
+			errResp, err := errorResponse.Encode(nil)
+			if err != nil {
+				p.Logger.Info("Failed to encode error response", "error", err)
+				return nil, err
+			}
+			response, err := terminate.Encode(errResp)
+			if err != nil {
+				p.Logger.Info("Failed to encode terminate response", "error", err)
+				return nil, err
+			}
 			req.Fields["response"] = v1.NewBytesValue(response)
 			req.Fields["terminate"] = v1.NewBoolValue(true)
 		}
@@ -176,13 +199,13 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			}
 		case SCRAMSHA256:
 			server := cast.ToStringMapString(sdkPlugin.GetAttr(req, "server", ""))
-			serverConfig := p.getServers(server["network"], server["address"])
+			serverConfig := p.filterServers(server["network"], server["address"])
 			if len(serverConfig) == 0 {
 				p.Logger.Info("OnTrafficFromClient", "msg", "Failed to get server config")
 				p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
 				break
 			}
-			if !serverConfig[maps.Keys(serverConfig)[0]].TLSEnabled {
+			if !serverConfig[maps.Keys(serverConfig)[0]].IsTLSEnabled {
 				p.Logger.Info("OnTrafficFromClient", "msg", "TLS is not enabled, cannot use SCRAM-SHA-256")
 				p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
 				break
@@ -215,15 +238,31 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 				SecretKey: 54321,
 			}
 			readyForQuery := pgproto3.ReadyForQuery{TxStatus: 'I'}
-			response := readyForQuery.Encode(
-				backendKeyData.Encode(
-					pStat1.Encode(
-						pStat2.Encode(
-							authOK.Encode(nil),
-						),
-					),
-				),
-			)
+			authOKResp, err := authOK.Encode(nil)
+			if err != nil {
+				p.Logger.Info("Failed to encode auth ok", "error", err)
+				return nil, err
+			}
+			pStat2Resp, err := pStat2.Encode(authOKResp)
+			if err != nil {
+				p.Logger.Info("Failed to encode parameter status", "error", err)
+				return nil, err
+			}
+			pStat1Resp, err := pStat1.Encode(pStat2Resp)
+			if err != nil {
+				p.Logger.Info("Failed to encode parameter status", "error", err)
+				return nil, err
+			}
+			backKeyDataResp, err := backendKeyData.Encode(pStat1Resp)
+			if err != nil {
+				p.Logger.Info("Failed to encode backend key data", "error", err)
+				return nil, err
+			}
+			response, err := readyForQuery.Encode(backKeyDataResp)
+			if err != nil {
+				p.Logger.Info("Failed to encode ready for query", "error", err)
+				return nil, err
+			}
 			req.Fields["response"] = v1.NewBytesValue(response)
 			req.Fields["terminate"] = v1.NewBoolValue(true)
 		} else {
@@ -231,7 +270,16 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
 
 			terminate := pgproto3.Terminate{}
-			response := terminate.Encode(errorResponse.Encode(nil))
+			errResp, err := errorResponse.Encode(nil)
+			if err != nil {
+				p.Logger.Info("Failed to encode error response", "error", err)
+				return nil, err
+			}
+			response, err := terminate.Encode(errResp)
+			if err != nil {
+				p.Logger.Info("Failed to encode terminate response", "error", err)
+				return nil, err
+			}
 			req.Fields["response"] = v1.NewBytesValue(response)
 			req.Fields["terminate"] = v1.NewBoolValue(true)
 		}
