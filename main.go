@@ -11,6 +11,7 @@ import (
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/metrics"
 	p "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin"
 	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
+	apiV1 "github.com/gatewayd-io/gatewayd/api/v1"
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/spf13/cast"
@@ -63,8 +64,8 @@ func main() {
 			logger.Error("Failed to initialize API client", "error", err)
 			os.Exit(1)
 		}
-		pluginInstance.Impl.APIClient = apiClient
 		defer apiClient.Close()
+		pluginInstance.Impl.APIClient = apiV1.NewGatewayDAdminAPIServiceClient(apiClient)
 
 		pluginInstance.Impl.AuthType = plugin.AuthType(cast.ToString(cfg["authType"]))
 	}
