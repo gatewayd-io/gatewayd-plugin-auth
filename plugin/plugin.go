@@ -96,7 +96,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 	OnTrafficFromClient.Inc()
 	req, err := postgres.HandleClientMessage(req, p.Logger)
 	if err != nil {
-		p.Logger.Info("Failed to handle client message", "error", err)
+		p.Logger.Debug("Failed to handle client message", "error", err)
 	}
 
 	connPair := getConnPair(req)
@@ -107,7 +107,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 	if val, exists := req.Fields[STARTUP_MESSAGE]; exists {
 		startupMessageDecoded, err := base64.StdEncoding.DecodeString(val.GetStringValue())
 		if err != nil {
-			p.Logger.Info("Failed to decode startup message", "error", err)
+			p.Logger.Debug("Failed to decode startup message", "error", err)
 			return nil, err
 		}
 
@@ -120,48 +120,48 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		p.ClientInfo[connPair] = authInfo
 
 		if p.ClientInfo[connPair].Username == "postgres" {
-			p.Logger.Info("OnTrafficFromClient", "msg", "User is correct")
+			p.Logger.Debug("OnTrafficFromClient", "msg", "User is correct")
 
 			var response []byte
 			switch p.AuthType {
 			case CLEARTEXT_PASSWORD:
-				p.Logger.Info("OnTrafficFromClient", "msg", "CleartextPassword")
+				p.Logger.Debug("OnTrafficFromClient", "msg", "CleartextPassword")
 				authResponse := pgproto3.AuthenticationCleartextPassword{}
 				response, err = authResponse.Encode(nil)
 				if err != nil {
-					p.Logger.Info("Failed to encode cleartext password", "error", err)
+					p.Logger.Debug("Failed to encode cleartext password", "error", err)
 					return nil, err
 				}
 			case MD5:
-				p.Logger.Info("OnTrafficFromClient", "msg", "MD5")
+				p.Logger.Debug("OnTrafficFromClient", "msg", "MD5")
 				authResponse := pgproto3.AuthenticationMD5Password{
 					Salt: p.Salt,
 				}
 				response, err = authResponse.Encode(nil)
 				if err != nil {
-					p.Logger.Info("Failed to encode MD5 password", "error", err)
+					p.Logger.Debug("Failed to encode MD5 password", "error", err)
 					return nil, err
 				}
 			case SCRAM_SHA_256:
-				p.Logger.Info("OnTrafficFromClient", "msg", "ScramSHA256")
+				p.Logger.Debug("OnTrafficFromClient", "msg", "ScramSHA256")
 				authResponse := pgproto3.AuthenticationSASL{
 					AuthMechanisms: []string{"SCRAM-SHA-256"},
 				}
 				response, err = authResponse.Encode(nil)
 				if err != nil {
-					p.Logger.Info("Failed to encode SCRAM-SHA-256 password", "error", err)
+					p.Logger.Debug("Failed to encode SCRAM-SHA-256 password", "error", err)
 					return nil, err
 				}
 			}
 
 			req = p.sendResponse(req, response, true, true)
 		} else {
-			p.Logger.Info("OnTrafficFromClient", "msg", "User is incorrect")
+			p.Logger.Debug("OnTrafficFromClient", "msg", "User is incorrect")
 
 			terminate := pgproto3.Terminate{}
 			response, err := terminate.Encode(errorResponse)
 			if err != nil {
-				p.Logger.Info("Failed to encode terminate response", "error", err)
+				p.Logger.Debug("Failed to encode terminate response", "error", err)
 				return nil, err
 			}
 			req = p.sendResponse(req, response, true, true)
@@ -171,12 +171,12 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 	if val, exists := req.Fields[PASSWORD_MESSAGE]; exists {
 		passwordMessageDecoded, err := base64.StdEncoding.DecodeString(val.GetStringValue())
 		if err != nil {
-			p.Logger.Info("Failed to decode password message", "error", err)
+			p.Logger.Debug("Failed to decode password message", "error", err)
 			return nil, err
 		}
 
 		passwordMessage := cast.ToStringMapString(string(passwordMessageDecoded))
-		p.Logger.Info("OnTrafficFromClient", "passwordMessage", passwordMessage)
+		p.Logger.Debug("OnTrafficFromClient", "passwordMessage", passwordMessage)
 
 		authInfo := p.ClientInfo[connPair]
 		switch p.AuthType {
@@ -185,13 +185,13 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		case MD5:
 			password := "postgres"
 			if len(passwordMessage[PASSWORD]) != MD5_PASSWORD_LENGTH {
-				p.Logger.Info("OnTrafficFromClient", "msg", "Password is incorrect")
+				p.Logger.Debug("OnTrafficFromClient", "msg", "Password is incorrect")
 				p.ClientInfo[connPair] = Session{} // Reset auth info
 				break
 			}
 
 			hashedPassword := pgMD5Encrypt(password, authInfo.Username, string(p.Salt[:]))
-			p.Logger.Info("OnTrafficFromClient", "hashedPassword", hashedPassword)
+			p.Logger.Debug("OnTrafficFromClient", "hashedPassword", hashedPassword)
 
 			if hashedPassword == passwordMessage[PASSWORD] {
 				authInfo.Password = password
@@ -200,27 +200,27 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			server := cast.ToStringMapString(sdkPlugin.GetAttr(req, "server", ""))
 			serverConfig := p.filterServers(server["network"], server["address"])
 			if len(serverConfig) == 0 {
-				p.Logger.Info("OnTrafficFromClient", "msg", "Failed to get server config")
+				p.Logger.Debug("OnTrafficFromClient", "msg", "Failed to get server config")
 				p.ClientInfo[connPair] = Session{} // Reset auth info
 				break
 			}
 			if !serverConfig[maps.Keys(serverConfig)[0]].IsTLSEnabled {
-				p.Logger.Info("OnTrafficFromClient", "msg", "TLS is not enabled, cannot use SCRAM-SHA-256")
+				p.Logger.Debug("OnTrafficFromClient", "msg", "TLS is not enabled, cannot use SCRAM-SHA-256")
 				p.ClientInfo[connPair] = Session{} // Reset auth info
 				break
 			}
 			if passwordMessage[PASSWORD] == "SCRAM-SHA-256" {
-				p.Logger.Info("OnTrafficFromClient", "msg", "SCRAM-SHA-256 is not implemented yet")
+				p.Logger.Debug("OnTrafficFromClient", "msg", "SCRAM-SHA-256 is not implemented yet")
 				authInfo.Password = passwordMessage[PASSWORD]
 				break
 			}
 			// TODO: Implement SCRAM-SHA-256
-			p.Logger.Info("OnTrafficFromClient", "msg", "SCRAM-SHA-256 is not implemented yet")
+			p.Logger.Debug("OnTrafficFromClient", "msg", "SCRAM-SHA-256 is not implemented yet")
 		}
 		p.ClientInfo[connPair] = authInfo
 
 		if p.ClientInfo[connPair].Username == "postgres" && (p.ClientInfo[connPair].Password == "postgres" || p.ClientInfo[connPair].Password == "SCRAM-SHA-256") {
-			p.Logger.Info("OnTrafficFromClient", "msg", "Username/Password is correct")
+			p.Logger.Debug("OnTrafficFromClient", "msg", "Username/Password is correct")
 			p.ClientInfo[connPair] = Session{} // Reset auth info
 
 			authOK := pgproto3.AuthenticationOk{}
@@ -239,44 +239,44 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			readyForQuery := pgproto3.ReadyForQuery{TxStatus: 'I'}
 			authOKResp, err := authOK.Encode(nil)
 			if err != nil {
-				p.Logger.Info("Failed to encode auth ok", "error", err)
+				p.Logger.Debug("Failed to encode auth ok", "error", err)
 				return nil, err
 			}
 			pStat2Resp, err := pStat2.Encode(authOKResp)
 			if err != nil {
-				p.Logger.Info("Failed to encode parameter status", "error", err)
+				p.Logger.Debug("Failed to encode parameter status", "error", err)
 				return nil, err
 			}
 			pStat1Resp, err := pStat1.Encode(pStat2Resp)
 			if err != nil {
-				p.Logger.Info("Failed to encode parameter status", "error", err)
+				p.Logger.Debug("Failed to encode parameter status", "error", err)
 				return nil, err
 			}
 			backKeyDataResp, err := backendKeyData.Encode(pStat1Resp)
 			if err != nil {
-				p.Logger.Info("Failed to encode backend key data", "error", err)
+				p.Logger.Debug("Failed to encode backend key data", "error", err)
 				return nil, err
 			}
 			response, err := readyForQuery.Encode(backKeyDataResp)
 			if err != nil {
-				p.Logger.Info("Failed to encode ready for query", "error", err)
+				p.Logger.Debug("Failed to encode ready for query", "error", err)
 				return nil, err
 			}
 			req = p.sendResponse(req, response, true, true)
 		} else {
-			p.Logger.Info("OnTrafficFromClient", "msg", "Username/Password is incorrect")
+			p.Logger.Debug("OnTrafficFromClient", "msg", "Username/Password is incorrect")
 			p.ClientInfo[connPair] = Session{} // Reset auth info
 
 			terminate := pgproto3.Terminate{}
 			response, err := terminate.Encode(errorResponse)
 			if err != nil {
-				p.Logger.Info("Failed to encode terminate response", "error", err)
+				p.Logger.Debug("Failed to encode terminate response", "error", err)
 				return nil, err
 			}
 			req = p.sendResponse(req, response, true, true)
 		}
 	} else {
-		p.Logger.Info("OnTrafficFromClient", "msg", "Regular message", "req", req)
+		p.Logger.Debug("OnTrafficFromClient", "msg", "Regular message", "req", req)
 	}
 
 	return req, nil
@@ -286,7 +286,7 @@ func (p *Plugin) OnTrafficFromServer(ctx context.Context, req *v1.Struct) (*v1.S
 	OnTrafficFromServer.Inc()
 	req, err := postgres.HandleServerMessage(req, p.Logger)
 	if err != nil {
-		p.Logger.Info("Failed to handle server message", "error", err)
+		p.Logger.Debug("Failed to handle server message", "error", err)
 	}
 
 	p.Logger.Debug("OnTrafficFromServer", "req", req)
@@ -332,8 +332,9 @@ func pgMD5Encrypt(username, password, salt string) string {
 	return "md5" + finalHash
 }
 
+// TODO: refactor this to parameterize the signals
 func (p *Plugin) sendResponse(
-	req *v1.Struct, response []byte, terminate bool, log bool,
+	req *v1.Struct, response []byte, terminate, log bool,
 ) *v1.Struct {
 	signals := []any{}
 	if terminate {
