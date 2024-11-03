@@ -96,7 +96,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		p.Logger.Info("Failed to handle client message", "error", err)
 	}
 
-	connPair := GetConnPair(req)
+	connPair := getConnPair(req)
 	if _, exists := p.ClientInfo[connPair]; !exists {
 		p.ClientInfo[connPair] = AuthInfo{}
 	}
@@ -299,7 +299,7 @@ func (p *Plugin) OnTrafficFromServer(ctx context.Context, req *v1.Struct) (*v1.S
 	return req, nil
 }
 
-func GetConnPair(req *v1.Struct) ConnPair {
+func getConnPair(req *v1.Struct) ConnPair {
 	var connPair ConnPair
 
 	if val, exists := req.Fields["client"]; exists {
