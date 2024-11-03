@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -47,17 +48,39 @@ func (p *Plugin) getServers() map[string]Server {
 	return serverMap
 }
 
-// filterServers filters servers by network and address.
-func (p *Plugin) filterServers(network, address string) map[string]Server {
+// filterServers filters servers by address.
+func (p *Plugin) filterServers(address string) map[string]Server {
 	servers := p.getServers()
 	if servers == nil {
 		return nil
 	}
 
+	hostPort := strings.Split(address, ":")
+	if len(hostPort) != 2 {
+		p.Logger.Error(
+			"Failed to split host and port",
+			"address", address,
+		)
+		return nil
+	}
+
 	filteredServers := make(map[string]Server)
 	for name, server := range servers {
-		if server.Network == network && server.Address == address {
+		serverHostPort := strings.Split(server.Address, ":")
+		if len(serverHostPort) != 2 {
+			p.Logger.Error(
+				"Failed to split host and port",
+				"address", server.Address,
+			)
+			continue
+		}
+
+		// TODO: Figure out a way to compare the hosts.
+		// The server may listen on 0.0.0.0, and the incoming address may be a specific IP,
+		// like 127.0.0.1.
+		if hostPort[1] == serverHostPort[1] {
 			filteredServers[name] = server
+			break
 		}
 	}
 

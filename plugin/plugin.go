@@ -20,6 +20,7 @@ import (
 )
 
 var (
+	// TODO: Handle this in a better way
 	errorResponse = postgres.ErrorResponse(
 		ERROR_MESSAGE,
 		ERROR_SEVERITY,
@@ -144,6 +145,21 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 				}
 			case SCRAM_SHA_256:
 				p.Logger.Debug("OnTrafficFromClient", "msg", "ScramSHA256")
+
+				if !p.isTLSEnabled(req, connPair) {
+					p.Logger.Debug(
+						"OnTrafficFromClient", "msg", "TLS is not enabled, cannot use SCRAM-SHA-256")
+
+					terminate := pgproto3.Terminate{}
+					response, err := terminate.Encode(errorResponse)
+					if err != nil {
+						p.Logger.Debug("Failed to encode terminate response", "error", err)
+						return nil, err
+					}
+					req = p.sendResponse(req, response, true, true)
+					return req, nil
+				}
+
 				authResponse := pgproto3.AuthenticationSASL{
 					AuthMechanisms: []string{"SCRAM-SHA-256"},
 				}
@@ -197,16 +213,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 				authInfo.Password = password
 			}
 		case SCRAM_SHA_256:
-			server := cast.ToStringMapString(sdkPlugin.GetAttr(req, "server", ""))
-			serverConfig := p.filterServers(server["network"], server["address"])
-			if len(serverConfig) == 0 {
-				p.Logger.Debug("OnTrafficFromClient", "msg", "Failed to get server config")
-				p.ClientInfo[connPair] = Session{} // Reset auth info
-				break
-			}
-			if !serverConfig[maps.Keys(serverConfig)[0]].IsTLSEnabled {
-				p.Logger.Debug("OnTrafficFromClient", "msg", "TLS is not enabled, cannot use SCRAM-SHA-256")
-				p.ClientInfo[connPair] = Session{} // Reset auth info
+			if !p.isTLSEnabled(req, connPair) {
 				break
 			}
 			if passwordMessage[PASSWORD] == "SCRAM-SHA-256" {
@@ -365,4 +372,32 @@ func (p *Plugin) sendResponse(
 	}
 
 	return req
+}
+
+func (p *Plugin) isTLSEnabled(req *v1.Struct, connPair ConnPair) bool {
+	client := cast.ToStringMap(sdkPlugin.GetAttr(req, "client", ""))
+	if client == nil {
+		p.Logger.Debug("OnTrafficFromClient", "msg", "Failed to get client info")
+		p.ClientInfo[connPair] = Session{} // Reset auth info
+		return false
+	}
+	p.Logger.Debug("OnTrafficFromClient", "client", client)
+
+	// The local address is the address that GatewayD is listening on.
+	localAddr, exists := client["local"]
+	if !exists || cast.ToString(localAddr) == "" {
+		p.Logger.Debug("OnTrafficFromClient", "msg", "Failed to get local client info")
+		p.ClientInfo[connPair] = Session{} // Reset auth info
+		return false
+	}
+	p.Logger.Debug("OnTrafficFromClient", "client.local", client["local"])
+
+	serverConfig := p.filterServers(cast.ToString(localAddr))
+	p.Logger.Debug("OnTrafficFromClient", "serverConfig", serverConfig)
+	if len(serverConfig) == 0 || !serverConfig[maps.Keys(serverConfig)[0]].IsTLSEnabled {
+		p.ClientInfo[connPair] = Session{} // Reset auth info
+		return false
+	}
+
+	return true
 }
