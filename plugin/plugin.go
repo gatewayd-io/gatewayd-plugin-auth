@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 
+	sdkAct "github.com/gatewayd-io/gatewayd-plugin-sdk/act"
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/databases/postgres"
 	sdkPlugin "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin"
 	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
@@ -150,8 +151,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 				}
 			}
 
-			req.Fields["response"] = v1.NewBytesValue(response)
-			req.Fields["terminate"] = v1.NewBoolValue(true)
+			req = p.sendResponse(req, response, true, true)
 		} else {
 			p.Logger.Info("OnTrafficFromClient", "msg", "User is incorrect")
 
@@ -166,8 +166,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 				p.Logger.Info("Failed to encode terminate response", "error", err)
 				return nil, err
 			}
-			req.Fields["response"] = v1.NewBytesValue(response)
-			req.Fields["terminate"] = v1.NewBoolValue(true)
+			req = p.sendResponse(req, response, true, true)
 		}
 	} else if val, exists := req.Fields["passwordMessage"]; exists {
 		passwordMessageDecoded, err := base64.StdEncoding.DecodeString(val.GetStringValue())
@@ -263,8 +262,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 				p.Logger.Info("Failed to encode ready for query", "error", err)
 				return nil, err
 			}
-			req.Fields["response"] = v1.NewBytesValue(response)
-			req.Fields["terminate"] = v1.NewBoolValue(true)
+			req = p.sendResponse(req, response, true, true)
 		} else {
 			p.Logger.Info("OnTrafficFromClient", "msg", "Username/Password is incorrect")
 			p.ClientInfo[connPair] = AuthInfo{} // Reset auth info
@@ -280,8 +278,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 				p.Logger.Info("Failed to encode terminate response", "error", err)
 				return nil, err
 			}
-			req.Fields["response"] = v1.NewBytesValue(response)
-			req.Fields["terminate"] = v1.NewBoolValue(true)
+			req = p.sendResponse(req, response, true, true)
 		}
 	} else {
 		p.Logger.Info("OnTrafficFromClient", "msg", "Regular message", "req", req)
@@ -330,4 +327,38 @@ func pgMD5Encrypt(username, passwd, salt string) string {
 
 	// Convert the hash to a hex string
 	return "md5" + hex.EncodeToString(hash[:])
+}
+
+func (p *Plugin) sendResponse(
+	req *v1.Struct, response []byte, terminate bool, log bool,
+) *v1.Struct {
+	signals := []any{}
+	if terminate {
+		signals = append(signals, sdkAct.Terminate().ToMap())
+	}
+	if log {
+		signals = append(signals,
+			sdkAct.Log("info", "Returning response from the auth plugin", map[string]any{
+				"plugin": PluginID.GetName(),
+			}).ToMap(),
+		)
+	}
+
+	if len(signals) == 0 {
+		// No signals to send, so just return the response.
+		req.Fields["response"] = v1.NewBytesValue(response)
+		return req
+	}
+
+	signalsList, err := v1.NewList(signals)
+	if err != nil {
+		// This should never happen, but log the error just in case.
+		p.Logger.Error("Failed to create signals", "error", err)
+	} else {
+		// Return the cached response.
+		req.Fields[sdkAct.Signals] = v1.NewListValue(signalsList)
+		req.Fields["response"] = v1.NewBytesValue(response)
+	}
+
+	return req
 }
