@@ -19,11 +19,14 @@ import (
 	"google.golang.org/grpc"
 )
 
-var errorResponse = pgproto3.ErrorResponse{
-	Severity: "ERROR",
-	Code:     "28P01",
-	Message:  "password authentication failed",
-}
+var (
+	errorResponse = postgres.ErrorResponse(
+		ERROR_MESSAGE,
+		ERROR_SEVERITY,
+		ERROR_MESSAGE,
+		"",
+	)
+)
 
 type Session struct {
 	Username string
@@ -156,12 +159,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			p.Logger.Info("OnTrafficFromClient", "msg", "User is incorrect")
 
 			terminate := pgproto3.Terminate{}
-			errResp, err := errorResponse.Encode(nil)
-			if err != nil {
-				p.Logger.Info("Failed to encode error response", "error", err)
-				return nil, err
-			}
-			response, err := terminate.Encode(errResp)
+			response, err := terminate.Encode(errorResponse)
 			if err != nil {
 				p.Logger.Info("Failed to encode terminate response", "error", err)
 				return nil, err
@@ -270,12 +268,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			p.ClientInfo[connPair] = Session{} // Reset auth info
 
 			terminate := pgproto3.Terminate{}
-			errResp, err := errorResponse.Encode(nil)
-			if err != nil {
-				p.Logger.Info("Failed to encode error response", "error", err)
-				return nil, err
-			}
-			response, err := terminate.Encode(errResp)
+			response, err := terminate.Encode(errorResponse)
 			if err != nil {
 				p.Logger.Info("Failed to encode terminate response", "error", err)
 				return nil, err

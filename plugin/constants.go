@@ -13,4 +13,8 @@ const (
 	PASSWORD            = "Password"
 	SALT_SIZE           = 4
 	MD5_PASSWORD_LENGTH = 35
+
+	ERROR_MESSAGE  = "authentication failed"
+	ERROR_SEVERITY = "ERROR"
+	ERROR_NUMBER   = "28P01"
 )
