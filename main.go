@@ -44,7 +44,7 @@ func main() {
 
 	pluginInstance := plugin.NewTemplatePlugin(plugin.Plugin{
 		Logger:     logger,
-		ClientInfo: make(map[plugin.ConnPair]plugin.AuthInfo),
+		ClientInfo: make(map[plugin.ConnPair]plugin.Session),
 		AuthType:   plugin.MD5,
 		Salt:       salt,
 	})
