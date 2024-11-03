@@ -317,16 +317,24 @@ func GetConnPair(req *v1.Struct) ConnPair {
 	return connPair
 }
 
-// pgMD5Encrypt computes the MD5 checksum of "passwd" followed by "salt".
+// md5Hash computes the MD5 checksum and returns it as a hex string.
+func md5Hash(data string) string {
+	hash := md5.Sum([]byte(data))
+	return hex.EncodeToString(hash[:])
+}
+
+// pgMD5Encrypt computes the PostgreSQL-style MD5 checksum for authentication.
+// The format is: md5(md5(password + username) + salt).
 // concat('md5', md5(concat(md5(concat(password, username)), random-salt)))
 // https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-START-UP
-func pgMD5Encrypt(username, passwd, salt string) string {
-	hash := md5.Sum([]byte(passwd + username))
-	data := hex.EncodeToString(hash[:]) + salt
-	hash = md5.Sum([]byte(data))
+func pgMD5Encrypt(username, password, salt string) string {
+	// First hash: md5(password + username)
+	intermediateHash := md5Hash(password + username)
 
-	// Convert the hash to a hex string
-	return "md5" + hex.EncodeToString(hash[:])
+	// Second hash: md5(intermediateHash + salt)
+	finalHash := md5Hash(intermediateHash + salt)
+
+	return "md5" + finalHash
 }
 
 func (p *Plugin) sendResponse(
