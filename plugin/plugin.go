@@ -35,14 +35,10 @@ type Session struct {
 }
 
 type ConnPair struct {
-	Client struct {
-		Local  string
-		Remote string
-	}
-	Server struct {
-		Local  string
-		Remote string
-	}
+	ClientLocal  string
+	ClientRemote string
+	ServerLocal  string
+	ServerRemote string
 }
 type Plugin struct {
 	goplugin.GRPCPlugin
@@ -306,14 +302,14 @@ func getConnPair(req *v1.Struct) ConnPair {
 
 	if val, exists := req.Fields["client"]; exists {
 		client := cast.ToStringMap(val.GetStringValue())
-		connPair.Client.Local = cast.ToString(client["local"])
-		connPair.Client.Remote = cast.ToString(client["remote"])
+		connPair.ClientLocal = cast.ToString(client["local"])
+		connPair.ClientRemote = cast.ToString(client["remote"])
 	}
 
 	if val, exists := req.Fields["server"]; exists {
 		server := cast.ToStringMap(val.GetStringValue())
-		connPair.Server.Local = cast.ToString(server["local"])
-		connPair.Server.Remote = cast.ToString(server["local"])
+		connPair.ServerLocal = cast.ToString(server["local"])
+		connPair.ServerRemote = cast.ToString(server["local"])
 	}
 
 	return connPair
