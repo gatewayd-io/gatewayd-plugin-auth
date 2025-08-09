@@ -101,6 +101,17 @@ func main() {
 				requireValidCA,
 			)
 		}
+
+		// Initialize authorization if enabled
+		authzCfg := cast.ToStringMap(cfg["authorization"])
+		if authzCfg != nil && cast.ToBool(authzCfg["enabled"]) {
+			enforcer, err := plugin.NewAuthorizer(logger, cast.ToString(authzCfg["model_path"]), cast.ToString(authzCfg["policy_path"]))
+			if err != nil {
+				logger.Error("Failed to initialize authorizer", "error", err)
+				os.Exit(1)
+			}
+			pluginInstance.Impl.Authorizer = enforcer
+		}
 	}
 
 	plugin.NewFSM(logger)

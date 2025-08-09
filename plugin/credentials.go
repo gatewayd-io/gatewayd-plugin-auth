@@ -115,12 +115,22 @@ func (e *EnvCredentialStore) GetCredential(ctx context.Context, username string)
 	rolesKey := fmt.Sprintf("AUTH_USER_%s_ROLES", strings.ToUpper(username))
 	expiresKey := fmt.Sprintf("AUTH_USER_%s_EXPIRES", strings.ToUpper(username))
 
-	cred := &Credential{
+    cred := &Credential{
 		Username: username,
 		Password: password,
 		Salt:     os.Getenv(saltKey),
 		Metadata: make(map[string]string),
 	}
+
+    // Optional SCRAM precomputed keys
+    storedKeyKey := fmt.Sprintf("AUTH_USER_%s_STORED_KEY", strings.ToUpper(username))
+    serverKeyKey := fmt.Sprintf("AUTH_USER_%s_SERVER_KEY", strings.ToUpper(username))
+    if sk := os.Getenv(storedKeyKey); sk != "" {
+        cred.StoredKey = sk
+    }
+    if svk := os.Getenv(serverKeyKey); svk != "" {
+        cred.ServerKey = svk
+    }
 
 	if iterationsStr := os.Getenv(iterationsKey); iterationsStr != "" {
 		cred.Iterations = cast.ToInt(iterationsStr)

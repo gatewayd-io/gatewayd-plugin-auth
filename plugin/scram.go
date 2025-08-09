@@ -1,63 +1,65 @@
 package plugin
 
 import (
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"fmt"
-	"strings"
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/base64"
+    "errors"
+    "fmt"
+    "strings"
 
-	"github.com/jackc/pgx/v5/pgproto3"
-	"golang.org/x/crypto/pbkdf2"
+    "github.com/jackc/pgx/v5/pgproto3"
+    "golang.org/x/crypto/pbkdf2"
 )
 
 // ScramSHA256 represents the SCRAM-SHA-256 authentication state
 type ScramSHA256 struct {
-	Username       string
-	Password       string
-	Salt           []byte
-	Iterations     int
-	ClientNonce    string
-	ServerNonce    string
-	ClientFirstMsg string
-	ServerFirstMsg string
-	ClientFinalMsg string
-	ServerFinalMsg string
-	StoredKey      []byte
-	ServerKey      []byte
+    Username       string
+    // Password is optional; if StoredKey/ServerKey are provided we do not need it
+    Password       string
+    Salt           []byte
+    Iterations     int
+    ClientNonce    string
+    ServerNonce    string
+    ClientFirstMsg string
+    ServerFirstMsg string
+    ClientFinalMsg string
+    ServerFinalMsg string
+    StoredKey      []byte
+    ServerKey      []byte
 }
 
-// NewScramSHA256 creates a new SCRAM-SHA-256 authentication instance
-func NewScramSHA256(username, password string, iterations int) (*ScramSHA256, error) {
-	if iterations <= 0 {
-		iterations = SCRAM_SHA_256_ITERATION_COUNT
-	}
+// NewScramSHA256Session creates a SCRAM-SHA-256 session using stored user parameters.
+// Exactly one of (storedKey, serverKey) pair or password must be provided.
+func NewScramSHA256Session(username string, salt []byte, iterations int, serverNonceB64 string, storedKey, serverKey []byte, password string) (*ScramSHA256, error) {
+    if len(salt) == 0 {
+        return nil, errors.New("salt must be provided from credential store")
+    }
+    if iterations <= 0 {
+        iterations = SCRAM_SHA_256_ITERATION_COUNT
+    }
+    if (len(storedKey) == 0 || len(serverKey) == 0) && password == "" {
+        return nil, errors.New("either stored/server keys or password must be provided")
+    }
 
-	salt := make([]byte, SCRAM_SHA_256_SALT_LENGTH)
-	if _, err := rand.Read(salt); err != nil {
-		return nil, fmt.Errorf("failed to generate salt: %v", err)
-	}
+    s := &ScramSHA256{
+        Username:    username,
+        Password:    password,
+        Salt:        salt,
+        Iterations:  iterations,
+        ServerNonce: serverNonceB64,
+        StoredKey:   append([]byte(nil), storedKey...),
+        ServerKey:   append([]byte(nil), serverKey...),
+    }
 
-	serverNonce := make([]byte, 18)
-	if _, err := rand.Read(serverNonce); err != nil {
-		return nil, fmt.Errorf("failed to generate server nonce: %v", err)
-	}
+    // If stored keys are not provided, derive them from password
+    if len(s.StoredKey) == 0 || len(s.ServerKey) == 0 {
+        if err := s.computeKeys(); err != nil {
+            return nil, fmt.Errorf("failed to compute keys: %v", err)
+        }
+    }
 
-	scram := &ScramSHA256{
-		Username:    username,
-		Password:    password,
-		Salt:        salt,
-		Iterations:  iterations,
-		ServerNonce: base64.StdEncoding.EncodeToString(serverNonce),
-	}
-
-	// Pre-compute server key and stored key
-	if err := scram.computeKeys(); err != nil {
-		return nil, fmt.Errorf("failed to compute keys: %v", err)
-	}
-
-	return scram, nil
+    return s, nil
 }
 
 // computeKeys computes the stored key and server key for SCRAM-SHA-256
@@ -104,8 +106,8 @@ func (s *ScramSHA256) GenerateServerFirstMessage(clientFirstMsg string) ([]byte,
 		return nil, fmt.Errorf("client nonce not found in first message")
 	}
 
-	// Create combined nonce
-	combinedNonce := s.ClientNonce + s.ServerNonce
+    // Create combined nonce
+    combinedNonce := s.ClientNonce + s.ServerNonce
 
 	// Server first message: r=combinedNonce,s=base64(salt),i=iterations
 	s.ServerFirstMsg = fmt.Sprintf("r=%s,s=%s,i=%d",
@@ -159,8 +161,8 @@ func (s *ScramSHA256) VerifyClientFinalMessage(clientFinalMsg string) ([]byte, b
 		return nil, false, fmt.Errorf("failed to decode client proof: %v", err)
 	}
 
-	// Verify client proof
-	if !s.verifyClientProof(clientProof, channelBinding) {
+    // Verify client proof
+    if !s.verifyClientProof(clientProof, channelBinding) {
 		return nil, false, fmt.Errorf("client proof verification failed")
 	}
 
@@ -281,32 +283,30 @@ func CreateScramErrorResponse(errorMsg string) ([]byte, error) {
 }
 
 // VerifyScramCredentials verifies SCRAM-SHA-256 credentials from credential store
-func VerifyScramCredentials(username, password, salt string, iterations int, storedKey, serverKey []byte) bool {
-	// Recreate the SCRAM instance with provided credentials
-	scram := &ScramSHA256{
-		Username:   username,
-		Password:   password,
-		Salt:       []byte(salt),
-		Iterations: iterations,
-		StoredKey:  storedKey,
-		ServerKey:  serverKey,
-	}
-
-	// Compute keys with provided password
-	if err := scram.computeKeys(); err != nil {
-		return false
-	}
-
-	// Compare computed keys with stored keys
-	return hmac.Equal(scram.StoredKey, storedKey) && hmac.Equal(scram.ServerKey, serverKey)
+func VerifyScramCredentials(username, password string, salt []byte, iterations int, storedKey, serverKey []byte) bool {
+    s := &ScramSHA256{
+        Username:  username,
+        Password:  password,
+        Salt:      salt,
+        Iterations: iterations,
+    }
+    if err := s.computeKeys(); err != nil {
+        return false
+    }
+    return hmac.Equal(s.StoredKey, storedKey) && hmac.Equal(s.ServerKey, serverKey)
 }
 
 // GenerateScramCredentials generates SCRAM-SHA-256 credentials for storage
-func GenerateScramCredentials(username, password string, iterations int) (salt string, storedKey, serverKey []byte, err error) {
-	scram, err := NewScramSHA256(username, password, iterations)
-	if err != nil {
-		return "", nil, nil, err
-	}
-
-	return base64.StdEncoding.EncodeToString(scram.Salt), scram.StoredKey, scram.ServerKey, nil
+func GenerateScramCredentials(username, password string, iterations int, salt []byte) (saltB64 string, storedKey, serverKey []byte, err error) {
+    if iterations <= 0 {
+        iterations = SCRAM_SHA_256_ITERATION_COUNT
+    }
+    if len(salt) == 0 {
+        return "", nil, nil, errors.New("salt must be provided")
+    }
+    s := &ScramSHA256{Username: username, Password: password, Salt: salt, Iterations: iterations}
+    if err := s.computeKeys(); err != nil {
+        return "", nil, nil, err
+    }
+    return base64.StdEncoding.EncodeToString(s.Salt), s.StoredKey, s.ServerKey, nil
 }

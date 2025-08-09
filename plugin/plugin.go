@@ -1,12 +1,14 @@
 package plugin
 
 import (
-	"context"
-	"crypto/md5"
-	"encoding/base64"
-	"encoding/hex"
+    "context"
+    "crypto/md5"
+    "crypto/rand"
+    "encoding/base64"
+    "encoding/hex"
+    "encoding/json"
 
-	sdkAct "github.com/gatewayd-io/gatewayd-plugin-sdk/act"
+    sdkAct "github.com/gatewayd-io/gatewayd-plugin-sdk/act"
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/databases/postgres"
 	sdkPlugin "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin"
 	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
@@ -14,7 +16,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 	goplugin "github.com/hashicorp/go-plugin"
 	"github.com/jackc/pgx/v5/pgproto3"
-	"github.com/spf13/cast"
+    "github.com/spf13/cast"
 	"golang.org/x/exp/maps"
 	"google.golang.org/grpc"
 )
@@ -51,8 +53,9 @@ type Plugin struct {
 	Logger          hclog.Logger
 	Salt            [4]byte
 	CredentialStore CredentialStore
-	CertAuth        *CertificateAuthenticator
-	ScramSessions   map[ConnPair]*ScramSHA256 // Track SCRAM sessions
+    CertAuth        *CertificateAuthenticator
+    ScramSessions   map[ConnPair]*ScramSHA256 // Track SCRAM sessions
+    Authorizer      *Authorizer
 }
 
 type AuthPlugin struct {
@@ -111,8 +114,15 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			return nil, err
 		}
 
-		startupMessage := cast.ToStringMap(string(startupMessageDecoded))
-		parameters := cast.ToStringMapString(startupMessage["Parameters"])
+        var parameters map[string]string
+        var startupMessage map[string]any
+        if err := json.Unmarshal(startupMessageDecoded, &startupMessage); err == nil && startupMessage != nil {
+            parameters = cast.ToStringMapString(startupMessage["Parameters"])
+        } else {
+            // Fallback to legacy stringified map format
+            legacy := cast.ToStringMap(string(startupMessageDecoded))
+            parameters = cast.ToStringMapString(legacy["Parameters"])
+        }
 		p.Logger.Debug("OnTrafficFromClient", STARTUP_MESSAGE, parameters)
 
 		authInfo := p.ClientInfo[connPair]
@@ -151,12 +161,12 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 
 		p.Logger.Debug("OnTrafficFromClient", "msg", "User is valid")
 
-		var response []byte
+        var response []byte
 		switch p.AuthType {
 		case CLEARTEXT_PASSWORD:
 			p.Logger.Debug("OnTrafficFromClient", "msg", "CleartextPassword")
 			authResponse := pgproto3.AuthenticationCleartextPassword{}
-			response, err = authResponse.Encode(nil)
+            response, err = authResponse.Encode(nil)
 			if err != nil {
 				p.Logger.Debug("Failed to encode cleartext password", "error", err)
 				return nil, err
@@ -184,7 +194,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 					p.Logger.Debug("Failed to encode terminate response", "error", err)
 					return nil, err
 				}
-				req = p.sendResponse(req, response, true, true)
+                    req = p.sendResponse(req, response, true, true)
 				return req, nil
 			}
 
@@ -263,7 +273,8 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 						p.Logger.Debug("Failed to encode ready for query", "error", err)
 						return nil, err
 					}
-					req = p.sendResponse(req, response, true, true)
+                    // do not terminate; allow session to proceed
+                    req = p.sendResponse(req, response, false, true)
 					return req, nil
 				}
 			}
@@ -277,18 +288,28 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			}
 		}
 
-		req = p.sendResponse(req, response, true, true)
+        // normal auth challenge; do not terminate connection
+        req = p.sendResponse(req, response, false, true)
 	}
 
 	// Handle SASL Initial Response (for SCRAM-SHA-256)
-	if val, exists := req.Fields[SASL_INITIAL_RESPONSE]; exists {
-		saslInitialDecoded, err := base64.StdEncoding.DecodeString(val.GetStringValue())
+    if val, exists := req.Fields[SASL_INITIAL_RESPONSE]; exists {
+        saslInitialDecoded, err := base64.StdEncoding.DecodeString(val.GetStringValue())
 		if err != nil {
 			p.Logger.Debug("Failed to decode SASL initial response", "error", err)
 			return nil, err
 		}
 
-		username, _, err := ParseScramInitialResponse(saslInitialDecoded)
+        // Parse JSON { "Mechanism": "SCRAM-SHA-256", "Data": "n,,n=...,r=..." }
+        var saslInit map[string]any
+        if err := json.Unmarshal(saslInitialDecoded, &saslInit); err != nil {
+            p.Logger.Debug("Failed to unmarshal SASL initial response", "error", err)
+            errorResp, _ := CreateScramErrorResponse("invalid-initial-response-json")
+            req = p.sendResponse(req, errorResp, true, true)
+            return req, nil
+        }
+        dataStr := cast.ToString(saslInit["Data"])
+        username, clientNonce, err := ParseScramInitialResponse([]byte(dataStr))
 		if err != nil {
 			p.Logger.Debug("Failed to parse SCRAM initial response", "error", err)
 
@@ -329,8 +350,28 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			return req, nil
 		}
 
-		// Create SCRAM session
-		scramSession, err := NewScramSHA256(username, credential.Password, credential.Iterations)
+        // Prepare SCRAM session using stored salt/keys from credential
+        var saltBytes []byte
+        if credential.Salt != "" {
+            // salt can be base64 or raw
+            if dec, derr := base64.StdEncoding.DecodeString(credential.Salt); derr == nil {
+                saltBytes = dec
+            } else {
+                saltBytes = []byte(credential.Salt)
+            }
+        }
+        // server nonce: generate base64 string deterministically per session
+        serverNonce := makeRandomNonce()
+        storedKeyBytes, serverKeyBytes := decodeB64(credential.StoredKey), decodeB64(credential.ServerKey)
+        scramSession, err := NewScramSHA256Session(
+            username,
+            saltBytes,
+            credential.Iterations,
+            serverNonce,
+            storedKeyBytes,
+            serverKeyBytes,
+            credential.Password,
+        )
 		if err != nil {
 			p.Logger.Debug("Failed to create SCRAM session", "error", err)
 
@@ -343,14 +384,15 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			return req, nil
 		}
 
-		// Store session for this connection
+        // Track session for this connection
 		if p.ScramSessions == nil {
 			p.ScramSessions = make(map[ConnPair]*ScramSHA256)
 		}
 		p.ScramSessions[connPair] = scramSession
 
-		// Generate server first message
-		response, err := scramSession.GenerateServerFirstMessage(string(saslInitialDecoded))
+        // The clientFirst message contains client nonce we parsed; ensure the session captures it
+        _ = clientNonce
+        response, err := scramSession.GenerateServerFirstMessage(string(saslInitialDecoded))
 		if err != nil {
 			p.Logger.Debug("Failed to generate server first message", "error", err)
 
@@ -363,19 +405,29 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			return req, nil
 		}
 
-		req = p.sendResponse(req, response, true, true)
+        req = p.sendResponse(req, response, false, true)
 		return req, nil
 	}
 
 	// Handle SASL Response (for SCRAM-SHA-256)
-	if val, exists := req.Fields[SASL_RESPONSE]; exists {
-		saslResponseDecoded, err := base64.StdEncoding.DecodeString(val.GetStringValue())
+    if val, exists := req.Fields[SASL_RESPONSE]; exists {
+        saslResponseDecoded, err := base64.StdEncoding.DecodeString(val.GetStringValue())
 		if err != nil {
 			p.Logger.Debug("Failed to decode SASL response", "error", err)
 			return nil, err
 		}
 
-		// Get SCRAM session for this connection
+        // Parse JSON { "Data": "c=...,r=...,p=..." }
+        var saslResp map[string]any
+        if err := json.Unmarshal(saslResponseDecoded, &saslResp); err != nil {
+            p.Logger.Debug("Failed to unmarshal SASL response", "error", err)
+            errorResp, _ := CreateScramErrorResponse("invalid-response-json")
+            req = p.sendResponse(req, errorResp, true, true)
+            return req, nil
+        }
+        dataStr := cast.ToString(saslResp["Data"])
+
+        // Get SCRAM session for this connection
 		scramSession, exists := p.ScramSessions[connPair]
 		if !exists {
 			p.Logger.Debug("OnTrafficFromClient", "msg", "No SCRAM session found for connection")
@@ -390,7 +442,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		}
 
 		// Verify client final message
-		response, success, err := scramSession.VerifyClientFinalMessage(string(saslResponseDecoded))
+        response, success, err := scramSession.VerifyClientFinalMessage(dataStr)
 		if err != nil {
 			p.Logger.Debug("Failed to verify client final message", "error", err)
 
@@ -423,8 +475,8 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		// Mark as authenticated
 		p.ClientInfo[connPair] = Session{Username: scramSession.Username, Password: "scram-auth"}
 
-		// Send server final message first
-		req = p.sendResponse(req, response, true, true)
+        // Send server final message; do not terminate
+        req = p.sendResponse(req, response, false, true)
 		return req, nil
 	}
 
@@ -439,7 +491,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 		p.Logger.Debug("OnTrafficFromClient", "passwordMessage", passwordMessage)
 
 		authInfo := p.ClientInfo[connPair]
-		switch p.AuthType {
+        switch p.AuthType {
 		case CLEARTEXT_PASSWORD:
 			authInfo.Password = passwordMessage[PASSWORD]
 		case MD5:
@@ -459,7 +511,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 					break
 				}
 
-				hashedPassword := pgMD5Encrypt(password, authInfo.Username, string(p.Salt[:]))
+                hashedPassword := pgMD5Encrypt(password, authInfo.Username, string(p.Salt[:]))
 				p.Logger.Debug("OnTrafficFromClient", "hashedPassword", hashedPassword)
 
 				if hashedPassword == passwordMessage[PASSWORD] {
@@ -474,7 +526,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 					break
 				}
 
-				hashedPassword := pgMD5Encrypt(password, authInfo.Username, string(p.Salt[:]))
+                hashedPassword := pgMD5Encrypt(password, authInfo.Username, string(p.Salt[:]))
 				p.Logger.Debug("OnTrafficFromClient", "hashedPassword", hashedPassword)
 
 				if hashedPassword == passwordMessage[PASSWORD] {
@@ -518,7 +570,26 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 			isValid = authInfo.Username == "postgres" && (authInfo.Password == "postgres" || authInfo.Password == "SCRAM-SHA-256" || authInfo.Password == "cert-auth")
 		}
 
-		if isValid {
+        if isValid {
+            // Authorization check (optional)
+            if p.Authorizer != nil {
+                dbName := ""
+                if val, ok := req.Fields[STARTUP_MESSAGE]; ok {
+                    if sm, err := base64.StdEncoding.DecodeString(val.GetStringValue()); err == nil {
+                        m := cast.ToStringMap(string(sm))
+                        params := cast.ToStringMapString(m["Parameters"])
+                        dbName = params["database"]
+                    }
+                }
+                allowed, reason := p.Authorizer.AuthorizeConnect(ctx, authInfo.Username, dbName)
+                if !allowed {
+                    p.Logger.Debug("Authorization denied", "user", authInfo.Username, "db", dbName, "reason", reason)
+                    terminate := pgproto3.Terminate{}
+                    response, _ := terminate.Encode(errorResponse)
+                    req = p.sendResponse(req, response, true, true)
+                    return req, nil
+                }
+            }
 			p.Logger.Debug("OnTrafficFromClient", "msg", "Username/Password is correct")
 			p.ClientInfo[connPair] = Session{} // Reset auth info
 
@@ -561,7 +632,8 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 				p.Logger.Debug("Failed to encode ready for query", "error", err)
 				return nil, err
 			}
-			req = p.sendResponse(req, response, true, true)
+            // Successful auth; do not terminate here
+            req = p.sendResponse(req, response, false, true)
 		} else {
 			p.Logger.Debug("OnTrafficFromClient", "msg", "Username/Password is incorrect")
 			p.ClientInfo[connPair] = Session{} // Reset auth info
@@ -572,7 +644,7 @@ func (p *Plugin) OnTrafficFromClient(ctx context.Context, req *v1.Struct) (*v1.S
 				p.Logger.Debug("Failed to encode terminate response", "error", err)
 				return nil, err
 			}
-			req = p.sendResponse(req, response, true, true)
+            req = p.sendResponse(req, response, true, true)
 		}
 	} else {
 		p.Logger.Debug("OnTrafficFromClient", "msg", "Regular message", "req", req)
@@ -591,6 +663,27 @@ func (p *Plugin) OnTrafficFromServer(ctx context.Context, req *v1.Struct) (*v1.S
 	p.Logger.Debug("OnTrafficFromServer", "req", req)
 
 	return req, nil
+}
+
+// makeRandomNonce creates a base64-encoded 18-byte nonce
+func makeRandomNonce() string {
+    b := make([]byte, 18)
+    if _, err := rand.Read(b); err != nil {
+        // fallback to fixed value (only for non-production/testing)
+        return base64.StdEncoding.EncodeToString([]byte("gatewayd-fixed-nonce-123"))
+    }
+    return base64.StdEncoding.EncodeToString(b)
+}
+
+// decodeB64 parses base64-encoded string; returns empty slice if input empty/invalid
+func decodeB64(s string) []byte {
+    if s == "" {
+        return nil
+    }
+    if dec, err := base64.StdEncoding.DecodeString(s); err == nil {
+        return dec
+    }
+    return nil
 }
 
 func getConnPair(req *v1.Struct) ConnPair {

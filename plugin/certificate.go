@@ -1,17 +1,18 @@
 package plugin
 
 import (
-	"context"
-	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
-	"fmt"
-	"strings"
+    "context"
+    "crypto/sha256"
+    "crypto/tls"
+    "crypto/x509"
+    "encoding/pem"
+    "fmt"
+    "strings"
 
-	sdkPlugin "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin"
-	v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
-	"github.com/hashicorp/go-hclog"
-	"github.com/spf13/cast"
+    sdkPlugin "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin"
+    v1 "github.com/gatewayd-io/gatewayd-plugin-sdk/plugin/v1"
+    "github.com/hashicorp/go-hclog"
+    "github.com/spf13/cast"
 )
 
 // CertificateAuthenticator handles certificate-based authentication
@@ -73,23 +74,30 @@ func (c *CertificateAuthenticator) AuthenticateWithCertificate(ctx context.Conte
 
 // extractTLSConnection extracts TLS connection information from the request
 func (c *CertificateAuthenticator) extractTLSConnection(req *v1.Struct) (*tls.ConnectionState, error) {
-	client := cast.ToStringMap(sdkPlugin.GetAttr(req, "client", ""))
-	if client == nil {
-		return nil, fmt.Errorf("no client information found")
-	}
+    client := cast.ToStringMap(sdkPlugin.GetAttr(req, "client", ""))
+    if client == nil {
+        return nil, fmt.Errorf("no client information found")
+    }
 
-	// Check if TLS is enabled
-	tlsEnabled := cast.ToBool(client["tls_enabled"])
-	if !tlsEnabled {
-		return nil, fmt.Errorf("TLS is not enabled")
-	}
+    // Check if TLS is enabled
+    tlsEnabled := cast.ToBool(client["tls_enabled"])
+    if !tlsEnabled {
+        return nil, fmt.Errorf("TLS is not enabled")
+    }
 
-	// In a real implementation, you would extract the actual TLS connection state
-	// from the GatewayD context. For now, we'll simulate it.
-	return &tls.ConnectionState{
-		Version:     tls.VersionTLS12,
-		CipherSuite: tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-	}, nil
+    // Attempt to parse client certificate from attributes if present
+    // Expect PEM in client["tls_client_cert_pem"]
+    if pemStr, ok := client["tls_client_cert_pem"]; ok {
+        pemBytes := []byte(cast.ToString(pemStr))
+        cert, err := parseSingleCertFromPEM(pemBytes)
+        if err == nil {
+            // Populate minimal tls state with provided cert
+            return &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}, nil
+        }
+    }
+
+    // Fallback: no access to actual TLS state
+    return &tls.ConnectionState{}, nil
 }
 
 // extractClientCertificate extracts the client certificate from TLS connection
@@ -220,4 +228,19 @@ func GetCertificateInfo(cert *x509.Certificate) map[string]interface{} {
 		"ip_addresses":    cert.IPAddresses,
 		"fingerprint":     GetCertificateFingerprint(cert),
 	}
+}
+
+// parseSingleCertFromPEM parses first certificate from PEM
+func parseSingleCertFromPEM(pemBytes []byte) (*x509.Certificate, error) {
+    var block *pem.Block
+    for {
+        block, pemBytes = pem.Decode(pemBytes)
+        if block == nil {
+            break
+        }
+        if block.Type == "CERTIFICATE" {
+            return x509.ParseCertificate(block.Bytes)
+        }
+    }
+    return nil, fmt.Errorf("no certificate found in PEM")
 }

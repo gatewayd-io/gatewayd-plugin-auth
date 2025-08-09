@@ -51,6 +51,12 @@ var (
 				"ca_data":                sdkConfig.GetEnv("CERT_CA_DATA", ""),
 				"username_mapping_rules": sdkConfig.GetEnv("CERT_USERNAME_MAPPING_RULES", ""),
 			},
+            "authorization": map[string]interface{}{
+                "enabled":       sdkConfig.GetEnv("AUTHZ_ENABLED", "false"),
+                "model_path":    sdkConfig.GetEnv("AUTHZ_MODEL_PATH", ""),
+                "policy_path":   sdkConfig.GetEnv("AUTHZ_POLICY_PATH", ""),
+                "watch":         sdkConfig.GetEnv("AUTHZ_WATCH", "false"),
+            },
 		},
 		"hooks": []interface{}{
 			int32(v1.HookName_HOOK_NAME_ON_TRAFFIC_FROM_CLIENT),
