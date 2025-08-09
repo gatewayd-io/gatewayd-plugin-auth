@@ -43,10 +43,11 @@ func main() {
 	}
 
 	pluginInstance := plugin.NewTemplatePlugin(plugin.Plugin{
-		Logger:     logger,
-		ClientInfo: make(map[plugin.ConnPair]plugin.Session),
-		AuthType:   plugin.MD5,
-		Salt:       salt,
+		Logger:        logger,
+		ClientInfo:    make(map[plugin.ConnPair]plugin.Session),
+		AuthType:      plugin.MD5,
+		Salt:          salt,
+		ScramSessions: make(map[plugin.ConnPair]*plugin.ScramSHA256),
 	})
 
 	if cfg := cast.ToStringMap(plugin.PluginConfig["config"]); cfg != nil {
@@ -68,7 +69,41 @@ func main() {
 		pluginInstance.Impl.APIClient = apiV1.NewGatewayDAdminAPIServiceClient(apiClient)
 
 		pluginInstance.Impl.AuthType = plugin.AuthType(cast.ToString(cfg["authType"]))
+
+		// Initialize credential store
+		credentialBackend := plugin.CredentialBackend(cast.ToString(cfg["credentialBackend"]))
+		credentialConfig := cast.ToStringMap(cfg["credentialConfig"])
+		if credentialConfig == nil {
+			credentialConfig = make(map[string]interface{})
+		}
+
+		credentialStore, err := plugin.NewCredentialStore(credentialBackend, credentialConfig, logger)
+		if err != nil {
+			logger.Error("Failed to initialize credential store", "error", err, "backend", credentialBackend)
+			os.Exit(1)
+		}
+		pluginInstance.Impl.CredentialStore = credentialStore
+
+		// Initialize certificate authenticator if enabled
+		certAuthConfig := cast.ToStringMap(cfg["certificateAuth"])
+		if certAuthConfig != nil && cast.ToBool(certAuthConfig["enabled"]) {
+			caPool, err := plugin.LoadCAPool(certAuthConfig)
+			if err != nil {
+				logger.Error("Failed to load CA pool", "error", err)
+				os.Exit(1)
+			}
+
+			requireValidCA := cast.ToBool(certAuthConfig["require_valid_ca"])
+			pluginInstance.Impl.CertAuth = plugin.NewCertificateAuthenticator(
+				logger,
+				credentialStore,
+				caPool,
+				requireValidCA,
+			)
+		}
 	}
+
+	plugin.NewFSM(logger)
 
 	goplugin.Serve(&goplugin.ServeConfig{
 		HandshakeConfig: goplugin.HandshakeConfig{

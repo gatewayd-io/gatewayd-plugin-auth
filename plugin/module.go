@@ -36,6 +36,21 @@ var (
 			"metricsEndpoint":         "/metrics",
 			"authType":                sdkConfig.GetEnv("AUTH_TYPE", "scram-sha-256"),
 			"apiGRPCAddress":          sdkConfig.GetEnv("API_GRPC_ADDRESS", "localhost:19090"),
+			"credentialBackend":       sdkConfig.GetEnv("CREDENTIAL_BACKEND", "env"),
+			"credentialConfig": map[string]interface{}{
+				"file_path":                  sdkConfig.GetEnv("CREDENTIAL_FILE_PATH", "/etc/gatewayd/credentials.json"),
+				"vault_address":              sdkConfig.GetEnv("VAULT_ADDRESS", ""),
+				"vault_token":                sdkConfig.GetEnv("VAULT_TOKEN", ""),
+				"vault_mount_path":           sdkConfig.GetEnv("VAULT_MOUNT_PATH", "secret"),
+				"vault_insecure_skip_verify": sdkConfig.GetEnv("VAULT_INSECURE_SKIP_VERIFY", "false"),
+			},
+			"certificateAuth": map[string]interface{}{
+				"enabled":                sdkConfig.GetEnv("CERT_AUTH_ENABLED", "false"),
+				"require_valid_ca":       sdkConfig.GetEnv("CERT_REQUIRE_VALID_CA", "true"),
+				"use_system_ca":          sdkConfig.GetEnv("CERT_USE_SYSTEM_CA", "false"),
+				"ca_data":                sdkConfig.GetEnv("CERT_CA_DATA", ""),
+				"username_mapping_rules": sdkConfig.GetEnv("CERT_USERNAME_MAPPING_RULES", ""),
+			},
 		},
 		"hooks": []interface{}{
 			int32(v1.HookName_HOOK_NAME_ON_TRAFFIC_FROM_CLIENT),

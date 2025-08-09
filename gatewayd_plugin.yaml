@@ -15,6 +15,7 @@ plugins:
     localPath: ../gatewayd-plugin-auth/gatewayd-plugin-auth
     # Pass cmdline args to the plugin
     args: ["--log-level", "info"]
+    url: github.com/gatewayd-io/gatewayd-plugin-auth@latest
     # Pass environment variables to the plugin
     # System-wide environment variables are passed to the plugin normally
     # and they can be accessed via os.Environ().
@@ -23,7 +24,42 @@ plugins:
       # The below environment variables are used by the plugin loader to verify the plugin's identity.
       - MAGIC_COOKIE_KEY=GATEWAYD_PLUGIN
       - MAGIC_COOKIE_VALUE=5712b87aa5d7e9f9e9ab643e6603181c5b796015cb1c09d6f5ada882bf2a1872
-      - AUTH_TYPE=md5
-      - API_ADDRESS=localhost:18080
+      
+      # Authentication configuration
+      - AUTH_TYPE=scram-sha-256  # Options: cleartext_password, md5, scram-sha-256, cert
+      - API_GRPC_ADDRESS=localhost:19090
+      
+      # Credential backend configuration
+      - CREDENTIAL_BACKEND=env  # Options: env, file, vault
+      - CREDENTIAL_FILE_PATH=/etc/gatewayd/credentials.json
+      
+      # Environment-based credentials (when CREDENTIAL_BACKEND=env)
+      - AUTH_USER_POSTGRES_PASSWORD=postgres
+      - AUTH_USER_POSTGRES_SALT=randomsalt
+      - AUTH_USER_POSTGRES_ITERATIONS=10000
+      - AUTH_USER_POSTGRES_ROLES=superuser
+      - AUTH_USER_ADMIN_PASSWORD=admin123
+      - AUTH_USER_ADMIN_SALT=adminsalt
+      - AUTH_USER_ADMIN_ITERATIONS=10000
+      - AUTH_USER_ADMIN_ROLES=admin,read,write
+      - AUTH_USER_ADMIN_EXPIRES=2025-12-31T23:59:59Z
+      
+      # Vault configuration (when CREDENTIAL_BACKEND=vault)
+      - VAULT_ADDRESS=https://vault.example.com:8200
+      - VAULT_TOKEN=your-vault-token
+      - VAULT_MOUNT_PATH=secret
+      - VAULT_INSECURE_SKIP_VERIFY=false
+      
+      # Certificate authentication configuration
+      - CERT_AUTH_ENABLED=false
+      - CERT_REQUIRE_VALID_CA=true
+      - CERT_USE_SYSTEM_CA=false
+      - CERT_CA_DATA=  # PEM-encoded CA certificates
+      - CERT_USERNAME_MAPPING_RULES=  # JSON mapping rules
+      
+      # Certificate to username mapping (when CERT_AUTH_ENABLED=true)
+      - AUTH_CERT_ADMIN@EXAMPLE.COM_USERNAME=admin
+      - AUTH_CERT_USER@EXAMPLE.COM_USERNAME=readonly
+      
     # Checksum hash to verify the binary before loading
     checksum: dee4aa014a722e1865d91744a4fd310772152467d9c6ab4ba17fd9dd40d3f724

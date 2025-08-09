@@ -9,7 +9,9 @@ require (
 	github.com/hashicorp/go-plugin v1.6.1
 	github.com/jackc/pgx/v5 v5.7.1
 	github.com/prometheus/client_golang v1.20.4
+	github.com/qmuntal/stateless v1.7.1
 	github.com/spf13/cast v1.7.0
+	golang.org/x/crypto v0.31.0
 	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c
 	google.golang.org/grpc v1.67.1
 	google.golang.org/protobuf v1.35.1
