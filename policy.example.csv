@@ -1,0 +1,8 @@
+p, admin, *, *, *
+p, readwrite, *, *, read
+p, readwrite, *, *, write
+p, readonly, *, *, read
+
+g, alice, admin
+g, bob, readonly
+g, service_account, readwrite
