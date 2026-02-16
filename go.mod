@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/casbin/casbin/v2 v2.135.0
 	github.com/gatewayd-io/gatewayd-plugin-sdk v0.4.4
+	github.com/getsentry/sentry-go v0.42.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.7.0
 	github.com/prometheus/client_golang v1.23.2

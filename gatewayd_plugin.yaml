@@ -35,3 +35,4 @@ plugins:
       # - AUTHORIZATION_ENABLED=true
       # - CASBIN_MODEL_PATH=../gatewayd-plugin-auth/model.conf
       # - CASBIN_POLICY_PATH=../gatewayd-plugin-auth/policy.csv
+      # - SENTRY_DSN=https://e9b154400dd9dc7b40c1af839dc4935e@o4504550475038720.ingest.us.sentry.io/4510898014519296

@@ -123,3 +123,7 @@ clients:
 ## Authorization
 
 Query authorization is optional and uses [Casbin](https://casbin.org) with an RBAC model. When enabled, every SQL query from an authenticated session is checked against the policy before being forwarded. See `model.conf` and `policy.example.csv` for the default model and an example policy.
+
+## Sentry
+
+This plugin uses [Sentry](https://sentry.io) for error tracking. Sentry can be configured using the `SENTRY_DSN` environment variable. If `SENTRY_DSN` is not set, Sentry will not be used.
