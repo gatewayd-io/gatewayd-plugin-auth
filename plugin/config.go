@@ -6,8 +6,11 @@ import (
 	sdkConfig "github.com/gatewayd-io/gatewayd-plugin-sdk/config"
 )
 
-// PluginConfigValues holds the runtime configuration for the auth plugin.
-type PluginConfigValues struct {
+// DefaultSessionTTLSeconds is the default TTL for auth sessions in seconds.
+const DefaultSessionTTLSeconds = 3600
+
+// ConfigValues holds the runtime configuration for the auth plugin.
+type ConfigValues struct {
 	// AuthType is the default authentication method.
 	AuthType AuthType
 	// CredentialsFile is the path to the YAML credentials file.
@@ -31,12 +34,12 @@ type PluginConfigValues struct {
 }
 
 // DefaultConfig returns the default plugin configuration.
-func DefaultConfig() *PluginConfigValues {
-	return &PluginConfigValues{
+func DefaultConfig() *ConfigValues {
+	return &ConfigValues{
 		AuthType:                AuthMD5,
 		CredentialsFile:         sdkConfig.GetEnv("CREDENTIALS_FILE", "credentials.yaml"),
 		ServerVersion:           sdkConfig.GetEnv("SERVER_VERSION", "17.4"),
-		SessionTTLSeconds:       3600,
+		SessionTTLSeconds:       DefaultSessionTTLSeconds,
 		MetricsEnabled:          true,
 		MetricsUnixDomainSocket: "/tmp/gatewayd-plugin-auth.sock",
 		MetricsEndpoint:         "/metrics",
@@ -47,41 +50,41 @@ func DefaultConfig() *PluginConfigValues {
 }
 
 // ParseConfig parses runtime config from the plugin's config map.
-func ParseConfig(cfg map[string]interface{}) *PluginConfigValues {
-	c := DefaultConfig()
+func ParseConfig(cfg map[string]interface{}) *ConfigValues {
+	config := DefaultConfig()
 
 	if v, ok := cfg["authType"]; ok {
-		c.AuthType = AuthType(fmt.Sprint(v))
+		config.AuthType = AuthType(fmt.Sprint(v))
 	}
 	if v, ok := cfg["credentialsFile"]; ok {
-		c.CredentialsFile = fmt.Sprint(v)
+		config.CredentialsFile = fmt.Sprint(v)
 	}
 	if v, ok := cfg["serverVersion"]; ok {
-		c.ServerVersion = fmt.Sprint(v)
+		config.ServerVersion = fmt.Sprint(v)
 	}
 	if v, ok := cfg["sessionTTLSeconds"]; ok {
 		if ttl, ok := v.(float64); ok {
-			c.SessionTTLSeconds = int(ttl)
+			config.SessionTTLSeconds = int(ttl)
 		}
 	}
 	if v, ok := cfg["metricsEnabled"]; ok {
-		c.MetricsEnabled = fmt.Sprint(v) == "true"
+		config.MetricsEnabled = fmt.Sprint(v) == "true"
 	}
 	if v, ok := cfg["metricsUnixDomainSocket"]; ok {
-		c.MetricsUnixDomainSocket = fmt.Sprint(v)
+		config.MetricsUnixDomainSocket = fmt.Sprint(v)
 	}
 	if v, ok := cfg["metricsEndpoint"]; ok {
-		c.MetricsEndpoint = fmt.Sprint(v)
+		config.MetricsEndpoint = fmt.Sprint(v)
 	}
 	if v, ok := cfg["casbinModelPath"]; ok {
-		c.CasbinModelPath = fmt.Sprint(v)
+		config.CasbinModelPath = fmt.Sprint(v)
 	}
 	if v, ok := cfg["casbinPolicyPath"]; ok {
-		c.CasbinPolicyPath = fmt.Sprint(v)
+		config.CasbinPolicyPath = fmt.Sprint(v)
 	}
 	if v, ok := cfg["authorizationEnabled"]; ok {
-		c.AuthorizationEnabled = fmt.Sprint(v) == "true"
+		config.AuthorizationEnabled = fmt.Sprint(v) == "true"
 	}
 
-	return c
+	return config
 }

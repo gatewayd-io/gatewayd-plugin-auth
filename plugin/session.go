@@ -11,9 +11,9 @@ type Session struct {
 	Username        string
 	Database        string
 	AuthMethod      AuthType
-	Salt            [SaltSize]byte     // per-connection salt for MD5
-	ScramState      *ScramServerState  // multi-round SCRAM state
-	Roles           []string           // populated after auth for authorization
+	Salt            [SaltSize]byte    // per-connection salt for MD5
+	ScramState      *ScramServerState // multi-round SCRAM state
+	Roles           []string          // populated after auth for authorization
 	CreatedAt       time.Time
 	AuthenticatedAt time.Time
 }

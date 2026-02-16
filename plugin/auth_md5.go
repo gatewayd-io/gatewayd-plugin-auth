@@ -34,7 +34,7 @@ func (a *MD5Authenticator) HandleStartup(session *Session, _ *UserCredential) ([
 }
 
 // HandleResponse validates the MD5-hashed password.
-// PostgreSQL MD5 format: "md5" + md5(md5(password + username) + salt)
+// PostgreSQL MD5 format: "md5" + md5(md5(password + username) + salt).
 func (a *MD5Authenticator) HandleResponse(
 	session *Session, cred *UserCredential, msgData map[string]string,
 ) ([]byte, bool, error) {
@@ -66,8 +66,8 @@ func (a *MD5Authenticator) HandleResponse(
 	return resp, true, nil
 }
 
-// pgMD5Hash computes the PostgreSQL-style MD5 hash:
-// "md5" + md5(md5(password + username) + salt)
+// pgMD5Hash computes the PostgreSQL-style MD5 hash.
+// Format: "md5" + md5(md5(password + username) + salt).
 func pgMD5Hash(password, username string, salt [SaltSize]byte) string {
 	// First hash: md5(password + username)
 	inner := md5.Sum([]byte(password + username)) //nolint:gosec

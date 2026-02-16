@@ -78,32 +78,39 @@ func (a *Authorizer) ReloadPolicy() error {
 	return a.enforcer.LoadPolicy()
 }
 
+// Casbin action constants used in authorization policy evaluation.
+const (
+	ActionRead  = "read"
+	ActionWrite = "write"
+	ActionAdmin = "admin"
+)
+
 // sqlAction maps the first SQL keyword to a Casbin action.
 func sqlAction(query string) string {
-	q := strings.TrimSpace(strings.ToUpper(query))
+	normalized := strings.TrimSpace(strings.ToUpper(query))
 
 	switch {
-	case strings.HasPrefix(q, "SELECT"):
-		return "read"
-	case strings.HasPrefix(q, "INSERT"):
-		return "write"
-	case strings.HasPrefix(q, "UPDATE"):
-		return "write"
-	case strings.HasPrefix(q, "DELETE"):
-		return "write"
-	case strings.HasPrefix(q, "CREATE"):
-		return "admin"
-	case strings.HasPrefix(q, "DROP"):
-		return "admin"
-	case strings.HasPrefix(q, "ALTER"):
-		return "admin"
-	case strings.HasPrefix(q, "TRUNCATE"):
-		return "admin"
-	case strings.HasPrefix(q, "GRANT"):
-		return "admin"
-	case strings.HasPrefix(q, "REVOKE"):
-		return "admin"
+	case strings.HasPrefix(normalized, "SELECT"):
+		return ActionRead
+	case strings.HasPrefix(normalized, "INSERT"):
+		return ActionWrite
+	case strings.HasPrefix(normalized, "UPDATE"):
+		return ActionWrite
+	case strings.HasPrefix(normalized, "DELETE"):
+		return ActionWrite
+	case strings.HasPrefix(normalized, "CREATE"):
+		return ActionAdmin
+	case strings.HasPrefix(normalized, "DROP"):
+		return ActionAdmin
+	case strings.HasPrefix(normalized, "ALTER"):
+		return ActionAdmin
+	case strings.HasPrefix(normalized, "TRUNCATE"):
+		return ActionAdmin
+	case strings.HasPrefix(normalized, "GRANT"):
+		return ActionAdmin
+	case strings.HasPrefix(normalized, "REVOKE"):
+		return ActionAdmin
 	default:
-		return "read" // default to read for unknown operations
+		return ActionRead
 	}
 }

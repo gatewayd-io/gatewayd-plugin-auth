@@ -16,12 +16,12 @@ var (
 
 // UserCredential represents a user's stored credentials and access configuration.
 type UserCredential struct {
-	Username     string   `yaml:"username"`
-	Password     string   `yaml:"password"`                // Plaintext password (used to derive hashes at runtime)
-	AuthMethods  []string `yaml:"auth_methods,omitempty"`   // Allowed auth methods: ["md5", "scram-sha-256", "cleartext"]
-	Roles        []string `yaml:"roles,omitempty"`          // Roles for authorization
-	Databases    []string `yaml:"databases,omitempty"`      // Allowed databases (empty = all)
-	Enabled      *bool    `yaml:"enabled,omitempty"`        // Whether the user is enabled (default: true)
+	Username    string   `yaml:"username"`
+	Password    string   `yaml:"password"`               // Plaintext password (used to derive hashes at runtime)
+	AuthMethods []string `yaml:"auth_methods,omitempty"` // Allowed auth methods: ["md5", "scram-sha-256", "cleartext"]
+	Roles       []string `yaml:"roles,omitempty"`        // Roles for authorization
+	Databases   []string `yaml:"databases,omitempty"`    // Allowed databases (empty = all)
+	Enabled     *bool    `yaml:"enabled,omitempty"`      // Whether the user is enabled (default: true)
 }
 
 // IsEnabled returns true if the user is enabled (defaults to true if not set).

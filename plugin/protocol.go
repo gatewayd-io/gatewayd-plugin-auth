@@ -3,14 +3,22 @@ package plugin
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/databases/postgres"
 	"github.com/spf13/cast"
 )
 
-// GenerateSalt generates a random salt of the given size.
-func GenerateSalt(size int) ([SaltSize]byte, error) {
+var (
+	// ErrNoParameters is returned when a startup message has no parameters.
+	ErrNoParameters = errors.New("no parameters in startup message")
+	// ErrNoUser is returned when a startup message has no user parameter.
+	ErrNoUser = errors.New("no user in startup message")
+)
+
+// GenerateSalt generates a random salt of SaltSize bytes.
+func GenerateSalt(_ int) ([SaltSize]byte, error) {
 	var salt [SaltSize]byte
 	if _, err := rand.Read(salt[:]); err != nil {
 		return salt, fmt.Errorf("generating salt: %w", err)
@@ -44,17 +52,17 @@ func DecodeBase64Field(encoded string) ([]byte, error) {
 }
 
 // ParseStartupParams extracts user and database from a decoded startup message.
-func ParseStartupParams(startupDecoded []byte) (user, database string, err error) {
+func ParseStartupParams(startupDecoded []byte) (string, string, error) {
 	startupMap := cast.ToStringMap(string(startupDecoded))
 	parameters := cast.ToStringMapString(startupMap["Parameters"])
 	if parameters == nil {
-		return "", "", fmt.Errorf("no parameters in startup message")
+		return "", "", ErrNoParameters
 	}
 
-	user = parameters[ParamUser]
-	database = parameters[ParamDatabase]
+	user := parameters[ParamUser]
+	database := parameters[ParamDatabase]
 	if user == "" {
-		return "", "", fmt.Errorf("no user in startup message")
+		return "", "", ErrNoUser
 	}
 
 	return user, database, nil

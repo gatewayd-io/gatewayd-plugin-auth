@@ -3,10 +3,24 @@ package plugin
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/databases/postgres"
 	"github.com/xdg-go/scram"
+)
+
+// SCRAM protocol constants.
+const (
+	// ScramIterations is the PBKDF2 iteration count for SCRAM-SHA-256.
+	ScramIterations = 4096
+)
+
+var (
+	// ErrNoSASLInitialData is returned when no SASL initial data is found in the message.
+	ErrNoSASLInitialData = errors.New("no SASL initial data found in message")
+	// ErrNoSASLResponseData is returned when no SASL response data is found in the message.
+	ErrNoSASLResponseData = errors.New("no SASL response data found in message")
 )
 
 // ScramAuthenticator implements SCRAM-SHA-256 authentication (RFC 5802).
@@ -33,7 +47,7 @@ func (a *ScramAuthenticator) HandleStartup(session *Session, _ *UserCredential) 
 func (a *ScramAuthenticator) HandleResponse(
 	session *Session, cred *UserCredential, msgData map[string]string,
 ) ([]byte, bool, error) {
-	switch session.State {
+	switch session.State { //nolint:exhaustive
 	case StateChallengeSent:
 		return a.handleClientFirst(session, cred, msgData)
 	case StateScramContinue:
@@ -65,7 +79,7 @@ func (a *ScramAuthenticator) handleClientFirst(
 		if clientErr != nil {
 			return scram.StoredCredentials{}, clientErr
 		}
-		return client.GetStoredCredentials(scram.KeyFactors{Iters: 4096}), nil
+		return client.GetStoredCredentialsWithError(scram.KeyFactors{Iters: ScramIterations})
 	})
 	if err != nil {
 		session.State = StateFailed
@@ -115,7 +129,7 @@ func (a *ScramAuthenticator) handleClientFinal(
 		return resp, false, fmt.Errorf("%w: %w", buildErr, err)
 	}
 
-	// Build SASL final + Auth OK
+	// Build SASL final + Auth OK.
 	saslFinal, err := postgres.BuildAuthSASLFinal([]byte(serverFinal))
 	if err != nil {
 		return nil, false, fmt.Errorf("building SASL final: %w", err)
@@ -127,8 +141,10 @@ func (a *ScramAuthenticator) handleClientFinal(
 		return nil, false, fmt.Errorf("building auth ok: %w", err)
 	}
 
-	// Combine SASL final + Auth OK sequence
-	response := append(saslFinal, authOk...)
+	// Combine SASL final + Auth OK sequence.
+	response := make([]byte, 0, len(saslFinal)+len(authOk))
+	response = append(response, saslFinal...)
+	response = append(response, authOk...)
 
 	session.State = StateAuthenticated
 	session.ScramState = nil // clean up SCRAM state
@@ -137,15 +153,15 @@ func (a *ScramAuthenticator) handleClientFinal(
 
 // saslInitialResponseJSON matches the JSON structure from pgproto3.SASLInitialResponse.MarshalJSON().
 type saslInitialResponseJSON struct {
-	Type          string `json:"Type"`
-	AuthMechanism string `json:"AuthMechanism"`
-	Data          string `json:"Data"` // base64 encoded
+	Type          string `json:"Type"`          //nolint:tagliatelle
+	AuthMechanism string `json:"AuthMechanism"` //nolint:tagliatelle
+	Data          string `json:"Data"`          //nolint:tagliatelle
 }
 
 // saslResponseJSON matches the JSON structure from pgproto3.SASLResponse.MarshalJSON().
 type saslResponseJSON struct {
-	Type string `json:"Type"`
-	Data string `json:"Data"` // base64 encoded
+	Type string `json:"Type"` //nolint:tagliatelle
+	Data string `json:"Data"` //nolint:tagliatelle
 }
 
 // extractSASLInitialData extracts the client-first-message bytes from the decoded SASL initial response.
@@ -154,28 +170,28 @@ func extractSASLInitialData(msgData map[string]string) ([]byte, error) {
 	// We need to get the raw Data field.
 	dataStr, ok := msgData["Data"]
 	if ok && dataStr != "" {
-		// Try base64 decode first
+		// Try base64 decode first.
 		decoded, err := base64.StdEncoding.DecodeString(dataStr)
 		if err == nil {
 			return decoded, nil
 		}
-		// If not base64, return as-is
+		// If not base64, return as-is.
 		return []byte(dataStr), nil
 	}
 
-	// Try parsing the whole thing as JSON
+	// Try parsing the whole thing as JSON.
 	for _, v := range msgData {
 		var sasl saslInitialResponseJSON
 		if err := json.Unmarshal([]byte(v), &sasl); err == nil && sasl.Data != "" {
-			decoded, err := base64.StdEncoding.DecodeString(sasl.Data)
-			if err != nil {
-				return []byte(sasl.Data), nil
+			decoded, decErr := base64.StdEncoding.DecodeString(sasl.Data)
+			if decErr != nil {
+				return []byte(sasl.Data), nil //nolint:nilerr
 			}
 			return decoded, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no SASL initial data found in message")
+	return nil, ErrNoSASLInitialData
 }
 
 // extractSASLResponseData extracts the client-final-message bytes from the decoded SASL response.
@@ -192,13 +208,13 @@ func extractSASLResponseData(msgData map[string]string) ([]byte, error) {
 	for _, v := range msgData {
 		var sasl saslResponseJSON
 		if err := json.Unmarshal([]byte(v), &sasl); err == nil && sasl.Data != "" {
-			decoded, err := base64.StdEncoding.DecodeString(sasl.Data)
-			if err != nil {
-				return []byte(sasl.Data), nil
+			decoded, decErr := base64.StdEncoding.DecodeString(sasl.Data)
+			if decErr != nil {
+				return []byte(sasl.Data), nil //nolint:nilerr
 			}
 			return decoded, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no SASL response data found in message")
+	return nil, ErrNoSASLResponseData
 }

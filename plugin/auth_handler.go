@@ -62,24 +62,26 @@ func (h *AuthHandler) HandleTrafficFromClient(ctx context.Context, req *v1.Struc
 		return h.handleAuthorizedTraffic(ctx, req, session)
 	}
 
+	fields := req.GetFields()
+
 	// Handle startup message (initial connection).
-	if val, exists := req.Fields[FieldStartupMessage]; exists {
-		return h.handleStartupMessage(ctx, req, session, clientRemote, val.GetStringValue())
+	if val, exists := fields[FieldStartupMessage]; exists {
+		return h.handleStartupMessage(ctx, req, session, val.GetStringValue())
 	}
 
 	// Handle password message (cleartext or MD5 response).
-	if val, exists := req.Fields[FieldPasswordMessage]; exists {
-		return h.handlePasswordMessage(req, session, clientRemote, val.GetStringValue())
+	if val, exists := fields[FieldPasswordMessage]; exists {
+		return h.handlePasswordMessage(ctx, req, session, clientRemote, val.GetStringValue())
 	}
 
 	// Handle SASL initial response (SCRAM client-first).
-	if val, exists := req.Fields[FieldSASLInitialResponse]; exists {
-		return h.handleSASLInitialResponse(req, session, clientRemote, val.GetStringValue())
+	if val, exists := fields[FieldSASLInitialResponse]; exists {
+		return h.handleSASLInitialResponse(ctx, req, session, clientRemote, val.GetStringValue())
 	}
 
 	// Handle SASL response (SCRAM client-final).
-	if val, exists := req.Fields[FieldSASLResponse]; exists {
-		return h.handleSASLResponse(req, session, clientRemote, val.GetStringValue())
+	if val, exists := fields[FieldSASLResponse]; exists {
+		return h.handleSASLResponse(ctx, req, session, clientRemote, val.GetStringValue())
 	}
 
 	// Not an auth-related message and not authenticated yet -- this shouldn't happen
@@ -89,7 +91,7 @@ func (h *AuthHandler) HandleTrafficFromClient(ctx context.Context, req *v1.Struc
 
 // handleStartupMessage processes a PostgreSQL StartupMessage.
 func (h *AuthHandler) handleStartupMessage(
-	ctx context.Context, req *v1.Struct, session *Session, clientRemote, encodedMsg string,
+	ctx context.Context, req *v1.Struct, session *Session, encodedMsg string,
 ) (*v1.Struct, error) {
 	decoded, err := DecodeBase64Field(encodedMsg)
 	if err != nil {
@@ -144,7 +146,7 @@ func (h *AuthHandler) handleStartupMessage(
 
 // handlePasswordMessage processes a PasswordMessage (cleartext or MD5 response).
 func (h *AuthHandler) handlePasswordMessage(
-	req *v1.Struct, session *Session, clientRemote, encodedMsg string,
+	ctx context.Context, req *v1.Struct, session *Session, clientRemote, encodedMsg string,
 ) (*v1.Struct, error) {
 	if session.State != StateChallengeSent {
 		h.Logger.Warn("Password message in unexpected state", "state", session.State)
@@ -159,7 +161,7 @@ func (h *AuthHandler) handlePasswordMessage(
 
 	msgData := ParsePasswordMessage(decoded)
 
-	cred, err := h.CredStore.LookupUser(context.Background(), session.Username)
+	cred, err := h.CredStore.LookupUser(ctx, session.Username)
 	if err != nil {
 		h.Logger.Error("User lookup failed during password validation", "error", err)
 		h.Sessions.Remove(clientRemote)
@@ -191,7 +193,7 @@ func (h *AuthHandler) handlePasswordMessage(
 
 // handleSASLInitialResponse processes a SASLInitialResponse (SCRAM client-first).
 func (h *AuthHandler) handleSASLInitialResponse(
-	req *v1.Struct, session *Session, clientRemote, encodedMsg string,
+	ctx context.Context, req *v1.Struct, session *Session, clientRemote, encodedMsg string,
 ) (*v1.Struct, error) {
 	if session.State != StateChallengeSent || session.AuthMethod != AuthScramSHA256 {
 		h.Logger.Warn("SASL initial response in unexpected state")
@@ -206,7 +208,7 @@ func (h *AuthHandler) handleSASLInitialResponse(
 
 	msgData := cast.ToStringMapString(string(decoded))
 
-	cred, err := h.CredStore.LookupUser(context.Background(), session.Username)
+	cred, err := h.CredStore.LookupUser(ctx, session.Username)
 	if err != nil {
 		h.Sessions.Remove(clientRemote)
 		return h.terminateWithAuthFail(req, "authentication failed")
@@ -228,7 +230,7 @@ func (h *AuthHandler) handleSASLInitialResponse(
 
 // handleSASLResponse processes a SASLResponse (SCRAM client-final).
 func (h *AuthHandler) handleSASLResponse(
-	req *v1.Struct, session *Session, clientRemote, encodedMsg string,
+	ctx context.Context, req *v1.Struct, session *Session, clientRemote, encodedMsg string,
 ) (*v1.Struct, error) {
 	if session.State != StateScramContinue {
 		h.Logger.Warn("SASL response in unexpected state")
@@ -243,7 +245,7 @@ func (h *AuthHandler) handleSASLResponse(
 
 	msgData := cast.ToStringMapString(string(decoded))
 
-	cred, err := h.CredStore.LookupUser(context.Background(), session.Username)
+	cred, err := h.CredStore.LookupUser(ctx, session.Username)
 	if err != nil {
 		h.Sessions.Remove(clientRemote)
 		return h.terminateWithAuthFail(req, "authentication failed")
@@ -276,16 +278,18 @@ func (h *AuthHandler) handleAuthorizedTraffic(
 		return req, nil
 	}
 
+	fields := req.GetFields()
+
 	// Check if this is a query message that needs authorization.
 	var query string
-	if val, exists := req.Fields[FieldQuery]; exists {
+	if val, exists := fields[FieldQuery]; exists {
 		decoded, err := base64.StdEncoding.DecodeString(val.GetStringValue())
 		if err == nil {
 			queryData := cast.ToStringMapString(string(decoded))
 			query = queryData["String"]
 		}
 	}
-	if val, exists := req.Fields[FieldParse]; exists && query == "" {
+	if val, exists := fields[FieldParse]; exists && query == "" {
 		decoded, err := base64.StdEncoding.DecodeString(val.GetStringValue())
 		if err == nil {
 			parseData := cast.ToStringMapString(string(decoded))
@@ -350,14 +354,14 @@ func (h *AuthHandler) terminateWithAuthFail(req *v1.Struct, detail string) (*v1.
 // getClientRemote extracts the client's remote address from the request.
 // GatewayD passes client info as a nested struct: {"client": {"local": "...", "remote": "..."}}.
 func getClientRemote(req *v1.Struct) string {
-	val, exists := req.Fields["client"]
+	val, exists := req.GetFields()["client"]
 	if !exists {
 		return ""
 	}
 
 	// The client field is a StructValue (nested map), not a string.
 	if clientStruct := val.GetStructValue(); clientStruct != nil {
-		if remote, ok := clientStruct.Fields["remote"]; ok {
+		if remote, ok := clientStruct.GetFields()["remote"]; ok {
 			return remote.GetStringValue()
 		}
 	}
