@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/gatewayd-io/gatewayd-plugin-sdk/databases/postgres"
+	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/spf13/cast"
 )
 
@@ -36,14 +37,13 @@ func BuildAuthFailResponse(detail string) ([]byte, error) {
 	)
 }
 
-// BuildAccessDeniedResponse builds a Terminate+ErrorResponse for authorization denial.
+// BuildAccessDeniedResponse builds an ErrorResponse+ReadyForQuery for authorization denial.
+// Unlike auth failure, we use ReadyForQuery (not Terminate) so the client knows the
+// server is ready for the next command — the session stays open after a denied query.
 func BuildAccessDeniedResponse(detail string) ([]byte, error) {
-	return postgres.BuildTerminateWithError(
-		ErrorMsgDenied,
-		ErrorSeverity,
-		ErrorCodeDenied,
-		detail,
-	)
+	errResp := postgres.ErrorResponse(ErrorMsgDenied, ErrorSeverity, ErrorCodeDenied, detail)
+	readyForQuery := &pgproto3.ReadyForQuery{TxStatus: 'I'}
+	return readyForQuery.Encode(errResp)
 }
 
 // DecodeBase64Field decodes a base64-encoded string field from the request struct.

@@ -41,3 +41,4 @@ linters-settings:
           - "github.com/xdg-go/scram"
           - "gopkg.in/yaml.v3"
           - "google.golang.org/grpc"
+          - "github.com/jackc/pgx/v5/pgproto3"
